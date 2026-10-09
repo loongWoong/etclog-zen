@@ -2,7 +2,11 @@
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from vehicle_info import extract_vehicle  # noqa: E402
 
 
 TITLE_RE = re.compile(r"^# Vehicle Log Merge: (.+)$")
@@ -220,11 +224,15 @@ def parse_markdown(path):
     for entry in entries:
         entry["coilLabel"] = coil_label(entry["coilId"], lane_profile)
 
+    # 车辆属性（车型 / 轴数 / 尺寸 / 车牌颜色）来自同一批原文，供三维模型按真实车型渲染
+    vehicle_info = extract_vehicle([entry["raw"] for entry in entries])
+
     return {
         "vehicle": vehicle,
         "sourceFile": path.name,
         "laneProfile": lane_profile,
         "passageTitle": passage_title(vehicle, entries),
+        "vehicleInfo": vehicle_info,
         "events": entries,
     }
 

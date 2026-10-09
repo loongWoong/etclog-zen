@@ -178,7 +178,7 @@ button {
   height: 100vh;
   overflow: hidden;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   border-left: 1px solid rgba(255, 255, 255, 0.12);
   background: #f8fafc;
   color: #17202a;
@@ -259,4 +259,83 @@ button {
     grid-template-columns: repeat(2, minmax(96px, 1fr));
     max-width: calc(100% - 36px);
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* 车辆信息卡：车型 / 轴数 / 尺寸来自日志，车身色标注来源            */
+/* ------------------------------------------------------------------ */
+.vehicle-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px 18px 16px;
+  border-bottom: 1px solid #e1e7ef;
+  background: #fbfdff;
+}
+
+.vehicle-card[hidden] {
+  display: none;
+}
+
+.vehicle-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.vehicle-plate {
+  font-size: 20px;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+.plate-chip {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 680;
+  background: #2b3138;
+  color: #93a1b1;
+}
+
+.vehicle-grid {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 4px 10px;
+  font-size: 12.5px;
+}
+
+.vehicle-grid .vk {
+  color: #5d6a79;
+}
+
+.vehicle-grid .vv {
+  color: #17202a;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.vehicle-color {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: #5d6a79;
+}
+
+.vehicle-color select {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid #d5dde7;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17202a;
+}
+
+.vehicle-note {
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: #6b7788;
 }

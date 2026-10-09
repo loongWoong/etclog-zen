@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>多车道过程 · ETC 收费站数字孪生</title>
+<link rel="stylesheet" href="./lanes.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/build/three.module.js",
+    "three/addons/": "./vendor/three/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app">
+  <aside class="side">
+    <header class="side-head">
+      <h1>多车道过程</h1>
+      <p class="sub" id="stationLine">加载中…</p>
+      <p class="sub dim" id="windowLine"></p>
+      <p class="sub dim" id="timeoutLine"></p>
+      <a class="link" href="./index.html">← 单车通行回放</a>
+    </header>
+
+    <section class="block">
+      <h2>站点汇总</h2>
+      <div class="summary" id="summary"></div>
+    </section>
+
+    <section class="block">
+      <h2>车道</h2>
+      <div class="lane-list" id="laneList"></div>
+    </section>
+
+    <section class="block grow">
+      <h2>过程详情</h2>
+      <div class="detail" id="detail">
+        <p class="dim">在下方泳道里点一条过程条带，或按播放让时间游标走过车道。</p>
+      </div>
+    </section>
+  </aside>
+
+  <main>
+    <div class="stage">
+      <canvas id="scene"></canvas>
+      <div class="hud" id="hud"></div>
+      <div class="clock" id="clock"></div>
+      <div class="timeout-pill" id="timeoutPill">当前游标处无超时设备</div>
+      <aside class="alert-panel" id="alertPanel" hidden>
+        <div class="alert-head">
+          <span class="alert-title">⚠ 超时告警</span>
+          <span class="alert-count" id="alertCount"></span>
+          <button class="alert-toggle" id="alertToggle" type="button" title="收起 / 展开详情">收起</button>
+        </div>
+        <div class="alert-body" id="alertBody"></div>
+      </aside>
+      <div class="legend">
+        <span class="lg"><i class="dot ld-run"></i>通行中</span>
+        <span class="lg"><i class="dot ld-pass"></i>已放行</span>
+        <span class="lg"><i class="dot ld-block"></i>拦截</span>
+        <span class="lg"><i class="dot ld-idle"></i>空闲</span>
+        <span class="lg"><i class="dot ld-timeout"></i>超时设备（红闪）</span>
+        <span class="lg sep">条带：</span>
+        <span class="lg"><i class="bar lg-pass"></i>放行</span>
+        <span class="lg"><i class="bar lg-block"></i>拦截</span>
+        <span class="lg"><i class="bar lg-mixed"></i>混合</span>
+        <span class="lg"><i class="bar lg-unknown"></i>未知</span>
+        <span class="lg sep">实线=强证据 · 虚线=中 · 点线=弱</span>
+      </div>
+    </div>
+
+    <div class="swim-resizer" id="swimResizer" role="separator" aria-orientation="horizontal" tabindex="0"
+         title="上下拖动调整时间线区域高度（双击复位，聚焦后可按 ↑/↓）"></div>
+
+    <div class="swim">
+      <div class="swim-caption">
+        状态时间线（每条车道由上到下）：线圈1 · 线圈2 · 线圈6 · 线圈7 · 栏杆 · 设备事件；<b>红色闪烁块 = 状态超时</b>（线圈压上 &gt; 20s / 抬杆 &gt; 30s / 过程 &gt; 90s）
+      </div>
+      <div class="swim-scale" id="swimScale"></div>
+      <div class="swim-rows" id="swimRows"></div>
+      <div class="swim-cursor" id="swimCursor"></div>
+    </div>
+
+    <div class="controls">
+      <button id="playBtn" class="primary">播放</button>
+      <label class="speed">倍速
+        <select id="speedSel">
+          <option value="1">1x</option>
+          <option value="2">2x</option>
+          <option value="4" selected>4x</option>
+          <option value="8">8x</option>
+          <option value="16">16x</option>
+        </select>
+      </label>
+      <input id="scrub" type="range" min="0" max="1000" value="0" step="1">
+      <span class="time" id="timeLabel">--:--:--</span>
+      <button id="resetBtn">回到开头</button>
+      <label class="toggle"><input type="checkbox" id="stateToggle" checked>状态时间线</label>
+      <label class="toggle"><input type="checkbox" id="detailToggle" checked>车道细部</label>
+      <label class="toggle"><input type="checkbox" id="flashToggle" checked>超时闪烁</label>
+    </div>
+  </main>
+</div>
+<script type="module" src="./lanes.js"></script>
+</body>
+</html>

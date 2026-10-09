@@ -1,13 +1,14 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { createRenderer, createRenderLoop, detectGpu, frameInterval, mountGpuBadge } from "./render-runtime.js";
+import { BODY_COLOR_OPTIONS, buildVehicleModel } from "./vehicle-models.js";
 
 // ---------------------------------------------------------------------------
 // 设备布局
 //   通行设备（车道现场）沿车辆行驶方向（+Z）按理论顺序排布：
 //     关道/摄像机 → 车牌识别 → 称重治超 → 车型识别 → 车检器1 → 前ETC天线
 //     → 车检器2 → CPC读卡 → 车道控制器 → 车检器6 → 后ETC天线 → 费显 → 车检器7 → 栏杆
-//   收费系统设备（交易/名单/计费/MQ/流水）不放在车道上，而是独立到右侧「虚拟机房」，
-//   再由机房连到更远处的「虚拟省中心」。
+//   收费系统设备（交易/名单/计费/MQ/流水）不做三维建模，只在右侧时间线里按日志出现。
 // ---------------------------------------------------------------------------
 const LANE_DEVICES = {
   vlpr: { label: "车牌识别", color: 0x5fb3ff, z: -22.0, x: -3.9 },
@@ -20,37 +21,22 @@ const LANE_DEVICES = {
   rsu: { label: "RSU/ETC天线", color: 0x56ccf2, z: 14.5, x: 0 },
 };
 
-// 收费系统：每台服务就是机房里的一台机柜
-const ROOM_DEVICES = {
-  service: { label: "交易服务", color: 0x75a7ff, rack: "标准机柜" },
-  namelist: { label: "名单服务", color: 0x9b8cff, rack: "标准机柜" },
-  fee: { label: "计费服务", color: 0x68d391, rack: "标准机柜" },
-  mq: { label: "消息/MQ", color: 0xf687b3, rack: "标准机柜" },
-  store: { label: "流水/Redis", color: 0x63b3ed, rack: "标准机柜" },
-};
-
-const deviceInfo = { ...LANE_DEVICES, ...ROOM_DEVICES };
+const deviceInfo = { ...LANE_DEVICES };
 const LANE_DEVICE_KEYS = Object.keys(LANE_DEVICES);
-const ROOM_DEVICE_KEYS = Object.keys(ROOM_DEVICES);
-// 需要和省中心交互的服务（流水/Redis 是本地落库，不上省中心）
-const PROVINCE_LINKED_KEYS = new Set(["service", "namelist", "fee", "mq"]);
-
-const ROOM = { x: 18, z: -2, halfW: 8, halfD: 6, height: 4.6 };
-const PROVINCE = { x: 37.5, z: -2 };
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x151a20);
 
 const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 400);
-const PANORAMA = { position: [-33, 33, 49], target: [12, 1.5, 0] };
+const PANORAMA = { position: [-36, 34, 54], target: [0, 1.5, 0] };
 camera.position.set(...PANORAMA.position);
 camera.lookAt(...PANORAMA.target);
 
-const renderer = new THREE.WebGLRenderer({
-  canvas: document.querySelector("#scene"),
-  antialias: true,
-});
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+// GPU 优先：显式要求高性能显卡；如果浏览器落到软件渲染，自动关抗锯齿并压到像素比 1
+const GPU = detectGpu();
+// 渲染循环在文件末尾创建；这里先声明，避免 controls 的监听器在求值期触发时踩到暂时性死区
+let LOOP = null;
+const renderer = createRenderer(document.querySelector("#scene"), GPU);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(...PANORAMA.target);
@@ -59,13 +45,12 @@ controls.dampingFactor = 0.08;
 controls.minDistance = 6;
 controls.maxDistance = 190;
 controls.maxPolarAngle = Math.PI * 0.48;
+controls.addEventListener("change", () => LOOP?.hold(500));
 controls.update();
 
 const VIEW_PRESETS = {
   panorama: { label: "全景", position: PANORAMA.position, target: PANORAMA.target },
   lane: { label: "车道现场", position: [-13, 8.5, -6], target: [0, 1.2, 2] },
-  room: { label: "虚拟机房", position: [18, 7.5, 15], target: [18, 1.4, -1] },
-  province: { label: "省中心", position: [30, 10, 21], target: [37.5, 4.5, -2] },
 };
 let cameraTween = null;
 
@@ -81,7 +66,6 @@ const coilMeshes = new Map();
 const profileObjects = [];
 const antennaEndpoints = [];
 const labels = [];
-const links = [];
 let replay = null;
 let currentIndex = 0;
 let playing = false;
@@ -119,6 +103,12 @@ const els = {
   count: document.querySelector("#eventCount"),
   title: document.querySelector("#eventTitle"),
   timeline: document.querySelector("#timeline"),
+  card: document.querySelector("#vehicleCard"),
+  plate: document.querySelector("#vehiclePlate"),
+  plateColor: document.querySelector("#vehiclePlateColor"),
+  spec: document.querySelector("#vehicleSpec"),
+  note: document.querySelector("#vehicleNote"),
+  bodyColor: document.querySelector("#bodyColorSelect"),
 };
 
 function mat(color, roughness = 0.7) {
@@ -297,9 +287,6 @@ function buildScene() {
     }
   });
 
-  buildMachineRoom();
-  buildProvinceCenter();
-  buildSiteLinks();
   renderViews();
 
   scene.add(makeVehicle());
@@ -307,13 +294,9 @@ function buildScene() {
 }
 
 function buildGround() {
-  const ground = box(150, 0.08, 96, 0x191d23);
-  ground.position.set(16, -0.1, 0);
+  const ground = box(64, 0.08, 96, 0x191d23);
+  ground.position.set(0, -0.1, 0);
   scene.add(ground);
-  // 车道与机房之间的场坪
-  const apron = box(26, 0.02, 30, 0x21262d);
-  apron.position.set(15.5, -0.04, ROOM.z);
-  scene.add(apron);
 }
 
 function buildDirectionArrows() {
@@ -437,191 +420,6 @@ function buildLaneDevice(key) {
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// 虚拟机房：收费系统服务各自一台机柜
-// ---------------------------------------------------------------------------
-function makeRackShell(color) {
-  const shell = box(1.75, 2.4, 1.2, 0x252b33);
-  shell.position.y = 1.5;
-  const panel = box(1.5, 1.95, 0.08, color);
-  panel.position.set(0, 1.55, 0.62);
-  const slots = new THREE.Group();
-  for (let index = 0; index < 5; index += 1) {
-    const unit = box(1.34, 0.17, 0.06, 0x121820);
-    unit.position.set(0, 0.8 + index * 0.37, 0.67);
-    slots.add(unit);
-  }
-  const led = new THREE.Mesh(
-    new THREE.BoxGeometry(0.18, 0.14, 0.06),
-    new THREE.MeshStandardMaterial({ color: 0x86efac, emissive: 0x1f7a4d, roughness: 0.4 })
-  );
-  led.position.set(0.62, 2.5, 0.63);
-  return { shell, panel, slots, led };
-}
-
-function buildMachineRoom() {
-  const slab = box(ROOM.halfW * 2 + 2.4, 0.3, ROOM.halfD * 2 + 2.4, 0x39414a);
-  slab.position.set(ROOM.x, 0.15, ROOM.z);
-  scene.add(slab);
-
-  const wallMaterial = new THREE.MeshStandardMaterial({
-    color: 0x8fb4d8,
-    transparent: true,
-    opacity: 0.13,
-    roughness: 0.35,
-    metalness: 0.1,
-    side: THREE.DoubleSide,
-  });
-  [
-    [ROOM.halfW * 2, ROOM.height, 0.1, ROOM.x, ROOM.z - ROOM.halfD],
-    [ROOM.halfW * 2, ROOM.height, 0.1, ROOM.x, ROOM.z + ROOM.halfD],
-    [0.1, ROOM.height, ROOM.halfD * 2, ROOM.x - ROOM.halfW, ROOM.z],
-    [0.1, ROOM.height, ROOM.halfD * 2, ROOM.x + ROOM.halfW, ROOM.z],
-  ].forEach(([width, height, depth, x, z]) => {
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), wallMaterial);
-    wall.position.set(x, ROOM.height / 2 + 0.3, z);
-    scene.add(wall);
-  });
-
-  const roof = box(ROOM.halfW * 2 + 0.5, 0.16, ROOM.halfD * 2 + 0.5, 0x2f3640);
-  roof.position.set(ROOM.x, ROOM.height + 0.3, ROOM.z);
-  scene.add(roof);
-
-  const banner = makeLabel("虚拟机房 · 收费系统", "#cfe6ff", 9);
-  banner.position.set(ROOM.x, ROOM.height + 2.4, ROOM.z);
-  scene.add(banner);
-
-  ROOM_DEVICE_KEYS.forEach((key, index) => {
-    const info = ROOM_DEVICES[key];
-    const { shell, panel, slots, led } = makeRackShell(info.color);
-    const group = new THREE.Group();
-    const label = makeLabel(info.label, "#e6f0ff", 2.8);
-    label.position.set(0, 3.1, 0);
-    group.add(shell, panel, slots, led, label);
-    const spacing = 3.1;
-    group.position.set(ROOM.x + (index - (ROOM_DEVICE_KEYS.length - 1) / 2) * spacing, 0.3, ROOM.z + 2.4);
-    scene.add(group);
-    deviceMeshes.set(key, { group, body: panel, baseColor: info.color, pulse: 0 });
-  });
-
-  [["精密空调", 0x9fb4c8], ["配电柜", 0x9ca3af], ["核心交换/ODF", 0x8ab4f8]].forEach(([text, color], index) => {
-    const group = new THREE.Group();
-    const shell = box(1.5, 2.1, 1.1, 0x232931);
-    shell.position.y = 1.35;
-    const panel = box(1.28, 1.0, 0.07, color);
-    panel.position.set(0, 1.6, 0.58);
-    const label = makeLabel(text, "#c9d6e4", 2.6);
-    label.position.set(0, 2.75, 0);
-    group.add(shell, panel, label);
-    group.position.set(ROOM.x + (index - 1) * 3.4, 0.3, ROOM.z - 3.2);
-    scene.add(group);
-  });
-}
-
-// ---------------------------------------------------------------------------
-// 虚拟省中心
-// ---------------------------------------------------------------------------
-function buildProvinceCenter() {
-  const slab = box(13, 0.3, 13, 0x39414a);
-  slab.position.set(PROVINCE.x, 0.15, PROVINCE.z);
-  scene.add(slab);
-
-  const group = new THREE.Group();
-  const levels = [
-    { width: 9.4, height: 3.4, color: 0x2b323c },
-    { width: 7.4, height: 3.6, color: 0x323a46 },
-    { width: 5.0, height: 3.2, color: 0x3a4451 },
-  ];
-  const stripMaterial = new THREE.MeshStandardMaterial({
-    color: 0x9fd8ff,
-    emissive: 0x2f6f9e,
-    roughness: 0.35,
-  });
-  let bottom = 0;
-  levels.forEach(({ width, height, color }) => {
-    const block = box(width, height, width, color);
-    block.position.y = bottom + height / 2;
-    group.add(block);
-    for (let row = 0; row < 2; row += 1) {
-      const strip = new THREE.Mesh(new THREE.BoxGeometry(width * 0.84, 0.14, 0.1), stripMaterial);
-      strip.position.set(0, bottom + 0.9 + row * 1.4, width / 2 + 0.06);
-      group.add(strip);
-    }
-    bottom += height;
-  });
-
-  const mast = cyl(0.09, 0.14, 3.4, 0x9ca3af, 12);
-  mast.position.y = bottom + 1.7;
-  const dish = cyl(0.85, 0.85, 0.18, 0xcfd8e3, 22);
-  dish.position.set(0.9, bottom + 3.0, 0);
-  dish.rotation.set(Math.PI * 0.3, 0, Math.PI * 0.15);
-  const beacon = new THREE.Mesh(
-    new THREE.SphereGeometry(0.3, 14, 14),
-    new THREE.MeshStandardMaterial({ color: 0xffd166, emissive: 0x8a6a12, roughness: 0.4 })
-  );
-  beacon.position.y = bottom + 3.5;
-  group.add(mast, dish, beacon);
-  group.position.set(PROVINCE.x, 0, PROVINCE.z);
-  scene.add(group);
-
-  const banner = makeLabel("虚拟省中心 · 联网收费中心", "#d8f7ff", 12);
-  banner.position.set(PROVINCE.x, bottom + 5.4, PROVINCE.z);
-  scene.add(banner);
-}
-
-// ---------------------------------------------------------------------------
-// 车道 → 机房 → 省中心 的连接链路
-// ---------------------------------------------------------------------------
-function makeLink(name, points, color) {
-  const vectors = points.map((point) => new THREE.Vector3(...point));
-  const path = new THREE.CurvePath();
-  for (let index = 0; index < vectors.length - 1; index += 1) {
-    path.add(new THREE.LineCurve3(vectors[index], vectors[index + 1]));
-  }
-  const line = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(vectors),
-    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.18 })
-  );
-  scene.add(line);
-  const packets = [];
-  for (let index = 0; index < 3; index += 1) {
-    const packet = new THREE.Mesh(
-      new THREE.SphereGeometry(0.17, 10, 10),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0 })
-    );
-    scene.add(packet);
-    packets.push({ mesh: packet, offset: index / 3 });
-  }
-  const link = { name, path, line, packets, color, active: false, clock: 0, speed: 0.42 };
-  links.push(link);
-  return link;
-}
-
-let laneRoomLink = null;
-let roomProvinceLink = null;
-
-function buildSiteLinks() {
-  laneRoomLink = makeLink(
-    "lane-room",
-    [
-      [LANE_DEVICES.lane.x + 0.6, 1.4, LANE_DEVICES.lane.z],
-      [9.0, 1.4, LANE_DEVICES.lane.z],
-      [9.0, 0.5, ROOM.z],
-      [ROOM.x - ROOM.halfW, 0.5, ROOM.z],
-    ],
-    0x6ee7ff
-  );
-  roomProvinceLink = makeLink(
-    "room-province",
-    [
-      [ROOM.x + ROOM.halfW, ROOM.height - 0.6, ROOM.z],
-      [(ROOM.x + PROVINCE.x) / 2, ROOM.height + 2.4, (ROOM.z + PROVINCE.z) / 2],
-      [PROVINCE.x - 4.7, 4.2, PROVINCE.z],
-    ],
-    0xffd166
-  );
-}
-
 function renderViews() {
   if (!els.views) return;
   els.views.replaceChildren(
@@ -645,6 +443,7 @@ function focusView(key) {
     toTarget: new THREE.Vector3(...preset.target),
     t: 0,
   };
+  LOOP?.hold(2200);
 }
 
 function makeGantry(z, labelText, options = {}) {
@@ -682,10 +481,7 @@ function makePostDevice(labelText, color) {
 }
 
 function renderLegend() {
-  const groups = [
-    ["通行设备 · 车道现场", LANE_DEVICE_KEYS],
-    ["收费系统 · 虚拟机房", ROOM_DEVICE_KEYS],
-  ];
+  const groups = [["通行设备 · 车道现场", LANE_DEVICE_KEYS]];
   const nodes = [];
   groups.forEach(([title, keys]) => {
     const heading = document.createElement("div");
@@ -730,34 +526,107 @@ function updateProfileVisibility(profile) {
   });
 }
 
-function makeVehicle() {
-  const car = new THREE.Group();
-  const body = box(1.65, 0.65, 3.2, 0x2f80ed);
-  body.position.y = 0.58;
-  const cab = box(1.35, 0.56, 1.25, 0x56ccf2);
-  cab.position.set(0, 1.08, -0.45);
-  const obu = box(0.34, 0.12, 0.22, 0xffd166);
-  obu.name = "obuUnit";
-  obu.position.set(0, 1.42, -0.88);
-  const obuLabel = makeLabel("OBU车载单元", "#fff6cc");
-  obuLabel.position.set(0, 2.05, -0.9);
-  const wheelMat = mat(0x0b0f14);
-  [-0.78, 0.78].forEach((x) => {
-    [-1.05, 1.05].forEach((z) => {
-      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.18, 18), wheelMat);
-      wheel.rotation.z = Math.PI / 2;
-      wheel.position.set(x, 0.28, z);
-      car.add(wheel);
-    });
-  });
-  car.add(body, cab, obu, obuLabel);
-  car.name = "vehicle";
-  car.position.set(0, 0, -28);
-  return car;
+function makeVehicle(spec = null, options = {}) {
+  const holder = new THREE.Group();
+  holder.name = "vehicle";
+  holder.position.set(0, 0, -28);
+
+  const built = buildVehicleModel(
+    spec || { kind: "car", axles: 2, dims: { length: 4.7, width: 1.85, height: 1.5 }, plate: "", plateColorCode: null },
+    { detail: true, ...options },
+  );
+  holder.add(built.group);
+
+  // OBU 标签指向模型里的 obuUnit，通信光束用它作为终点
+  const obu = built.group.getObjectByName("obuUnit");
+  if (obu) {
+    const label = makeLabel("OBU车载单元", "#fff6cc");
+    label.position.set(0, (built.spec.dims.height || 1.5) + 0.42, obu.position.z);
+    holder.add(label);
+  }
+  holder.userData.model = built;
+  return holder;
 }
 
 function vehicle() {
   return scene.getObjectByName("vehicle");
+}
+
+// ---------------------------------------------------------------------------
+// 车辆信息卡：车型 / 轴数 / 尺寸 / 车牌颜色来自日志，车身颜色单独标注来源
+// ---------------------------------------------------------------------------
+const PLATE_CHIP_COLORS = {
+  0: ["#1f4fa8", "#eef3ff"], 1: ["#d8a318", "#231a04"], 2: ["#15171b", "#f2f6fa"],
+  3: ["#e9eef4", "#1b2026"], 4: ["#2f9e5f", "#f0fff6"], 5: ["#c3cf45", "#20242a"],
+};
+
+function fillVehicleCard(spec, colorSource) {
+  if (!els.card) return;
+  els.card.hidden = !spec;
+  if (!spec) return;
+  els.plate.textContent = spec.plate || "车牌未识别";
+  const chip = PLATE_CHIP_COLORS[spec.plateColorCode] || ["#2b3138", "#93a1b1"];
+  els.plateColor.textContent = spec.plateColorLabel ? `${spec.plateColorLabel}号牌` : "车牌颜色未上报";
+  els.plateColor.style.background = chip[0];
+  els.plateColor.style.color = chip[1];
+
+  const dims = spec.dims || {};
+  const sizeText = `${dims.length?.toFixed(2) ?? "-"} × ${dims.width?.toFixed(2) ?? "-"} × ${dims.height?.toFixed(2) ?? "-"} m`;
+  const mass = spec.mass || {};
+  const rows = [
+    ["车型", `${spec.classLabel || "未知"}${spec.classCode ? `（部车型码 ${spec.classCode}）` : ""} · ${spec.classBasis || ""}`],
+    ["轴数", `${spec.axles || "-"} 轴${spec.axleSource ? `（${spec.axleSource}）` : ""}${spec.axleMismatch ? " ⚠ 与车型不符" : ""}`],
+    ["尺寸(长×宽×高)", `${sizeText}${spec.realDims ? " · 车型识别实测" : " · 车型典型值"}`],
+  ];
+  if (dims.wheelbase) rows.push(["轴距", `${dims.wheelbase.toFixed(2)} m`]);
+  rows.push(["车身颜色", colorSource]);
+  if (mass.load || mass.curb || mass.gvw || mass.actual) {
+    rows.push(["质量", [
+      mass.load ? `核载 ${mass.load}kg` : "", mass.curb ? `整备 ${mass.curb}kg` : "",
+      mass.gvw ? `总质量 ${mass.gvw}kg` : "", mass.actual ? `入口称重 ${mass.actual}kg` : "",
+    ].filter(Boolean).join(" · ")]);
+  }
+  if (spec.dangerous || spec.special) {
+    rows.push(["标志", [spec.dangerous ? "危险品运输" : "", spec.special ? "专项作业车" : ""].filter(Boolean).join(" · ")]);
+  }
+  if (spec.classMismatch) {
+    rows.push(["⚠ 车型不符", `车型识别判定 ${spec.identifiedClass}，申报 ${spec.declaredClass}`]);
+  }
+  els.spec.innerHTML = rows
+    .map(([key, value]) => `<div class="vk">${key}</div><div class="vv">${value}</div>`)
+    .join("");
+  els.note.textContent = (spec.evidence || []).length
+    ? `日志依据：${spec.evidence.join("；")}`
+    : "日志中没有车型/颜色字段，按默认车型渲染";
+}
+
+function applyVehicle(spec, options = {}) {
+  const previous = vehicle();
+  if (previous) {
+    scene.remove(previous);
+    previous.traverse((child) => {
+      if (!child.isSprite) return;
+      const index = labels.indexOf(child);
+      if (index >= 0) labels.splice(index, 1);
+    });
+  }
+  const holder = makeVehicle(spec, options);
+  scene.add(holder);
+  const built = holder.userData.model;
+  fillVehicleCard(spec, built ? built.bodyColorSource : "按车型常见配色示意");
+  LOOP?.hold(700);
+  return holder;
+}
+
+function initBodyColorSelect() {
+  if (!els.bodyColor) return;
+  els.bodyColor.innerHTML = BODY_COLOR_OPTIONS
+    .map((item) => `<option value="${item.value}">${item.label}</option>`)
+    .join("");
+  els.bodyColor.addEventListener("change", () => {
+    const value = els.bodyColor.value;
+    applyVehicle(replay?.vehicleInfo || null, value ? { bodyColor: value, bodyColorSource: "手动指定" } : {});
+  });
 }
 
 function barrierArm() {
@@ -817,19 +686,19 @@ function setEvent(index) {
 
   deviceMeshes.forEach((item) => {
     item.pulse = 0;
-    item.body.material.emissive = new THREE.Color(0x000000);
+    item.body.material.emissive.setHex(0x000000);
     item.body.scale.setScalar(1);
   });
   antennaEndpoints.forEach((item) => {
-    item.mesh.material.emissive = new THREE.Color(0x000000);
+    item.mesh.material.emissive.setHex(0x000000);
     item.mesh.scale.setScalar(1);
   });
   coilMeshes.forEach((item) => {
     item.pulse = 0;
-    item.body.material.emissive = new THREE.Color(0x000000);
+    item.body.material.emissive.setHex(0x000000);
     item.body.material.opacity = coilStates.get(item.body.userData.coilId) ? 0.78 : 0.38;
   });
-  const active = deviceMeshes.get(event.device) || deviceMeshes.get("service");
+  const active = deviceMeshes.get(event.device) || null;
   // 被车道类型过滤掉的设备（如 ETC 车道里的称重），在它自己的事件里临时显示
   profileObjects.forEach(({ object }) => {
     object.visible = object.userData.profileVisible !== false;
@@ -838,10 +707,10 @@ function setEvent(index) {
   if (event.device === "rsu") {
     const endpoint = communicationAntennaForVehicle();
     if (endpoint) {
-      endpoint.mesh.material.emissive = new THREE.Color(deviceInfo.rsu.color).multiplyScalar(1.1);
+      endpoint.mesh.material.emissive.setHex(deviceInfo.rsu.color).multiplyScalar(1.1);
       endpoint.mesh.scale.setScalar(1.18);
     }
-  } else {
+  } else if (active) {
     active.pulse = 1;
   }
   if (event.coilId && coilMeshes.has(event.coilId)) {
@@ -854,12 +723,7 @@ function setEvent(index) {
     coil.body.material.opacity = event.coilState === false ? 0.38 : 0.88;
   }
   communicationBeam.userData.active = event.device === "rsu";
-  // 链路动画：机房服务事件点亮「车道→机房」，与省中心交互的服务点亮「机房→省中心」
-  if (laneRoomLink) laneRoomLink.active = ROOM_DEVICE_KEYS.includes(event.device);
-  if (roomProvinceLink) roomProvinceLink.active = PROVINCE_LINKED_KEYS.has(event.device);
-  [...els.legend.children].forEach((item) => {
-    item.classList.toggle("active", item.dataset.device === event.device);
-  });
+  activeLegend(event.device);
 
   const arm = barrierArm();
   if (event.kind === "success") {
@@ -872,6 +736,8 @@ function setEvent(index) {
   els.clock.textContent = event.time.slice(11, 23);
   els.count.textContent = `${currentIndex + 1} / ${replay.events.length}`;
   updateTimelineActive();
+  // 让这次的脉冲缓动跑完再停帧
+  LOOP?.hold(700);
 }
 
 function renderTimeline() {
@@ -897,10 +763,32 @@ function renderTimeline() {
 }
 
 function updateTimelineActive() {
-  [...els.timeline.children].forEach((li, index) => {
-    li.classList.toggle("active", index === currentIndex);
-    if (index === currentIndex) li.scrollIntoView({ block: "nearest" });
-  });
+  if (timelineItems.length !== els.timeline.children.length) {
+    timelineItems = [...els.timeline.children];
+    timelineActiveEl = null;
+  }
+  const next = timelineItems[currentIndex];
+  if (timelineActiveEl === next) return;
+  timelineActiveEl?.classList.remove("active");
+  next?.classList.add("active");
+  timelineActiveEl = next;
+  // 滚动跟随限频：播放时每帧 scrollIntoView 会强制同步布局
+  const now = performance.now();
+  if (next && now - lastTimelineScroll > 250) {
+    lastTimelineScroll = now;
+    next.scrollIntoView({ block: "nearest" });
+  }
+}
+
+let timelineItems = [];
+let timelineActiveEl = null;
+let lastTimelineScroll = 0;
+
+let legendItems = [];
+
+function activeLegend(deviceKey) {
+  if (legendItems.length !== els.legend.children.length) legendItems = [...els.legend.children];
+  for (const item of legendItems) item.classList.toggle("active", item.dataset.device === deviceKey);
 }
 
 async function loadIndex() {
@@ -932,6 +820,7 @@ async function loadReplay(file) {
   els.vehicle.textContent = replay.vehicle;
   els.title.textContent = replay.passageTitle || `${replay.vehicle} ${replay.events[0]?.time?.slice(0, 19) || ""}`;
   els.scrubber.max = String(Math.max(replay.events.length - 1, 0));
+  applyVehicle(replay.vehicleInfo || null);
   updateProfileVisibility(replay.laneProfile);
   updateCoilVisibility(replay.laneProfile);
   buildEventPositions();
@@ -944,13 +833,24 @@ function resize() {
   renderer.setSize(rect.width, rect.height, false);
   camera.aspect = rect.width / Math.max(rect.height, 1);
   camera.updateProjectionMatrix();
+  LOOP?.hold(300);
 }
 
-function animate(now) {
-  requestAnimationFrame(animate);
-  const dt = (now - lastTick) / 1000;
-  lastTick = now;
+// ---------------------------------------------------------------------------
+// 按需渲染：只有播放中 / 相机交互 / 缓动与脉冲收尾时才出帧，空闲时停掉 RAF
+// ---------------------------------------------------------------------------
+const ANIM_SCRATCH_VECTOR = new THREE.Vector3();
+const ANIM_SCRATCH_VECTOR_B = new THREE.Vector3();
 
+function stillAnimating() {
+  if (playing || cameraTween) return true;
+  for (const item of deviceMeshes) if (item.pulse > 0) return true;
+  for (const item of coilMeshes) if (item.pulse > 0) return true;
+  // 脉冲衰减完、相机缓动结束后就是静态画面，不需要继续出帧
+  return false;
+}
+
+function onFrame(dt) {
   if (playing && replay?.events.length) {
     const next = currentIndex + Math.max(1, Math.floor(speed * dt * 2));
     if (next >= replay.events.length) {
@@ -964,15 +864,14 @@ function animate(now) {
 
   deviceMeshes.forEach((item) => {
     item.pulse = Math.max(0, item.pulse - dt * 1.6);
-    const intensity = item.pulse * 0.95;
-    item.body.material.emissive = new THREE.Color(item.baseColor).multiplyScalar(intensity);
+    // setHex 复用同一个 Color 对象，不再每帧 new THREE.Color()
+    item.body.material.emissive.setHex(item.baseColor).multiplyScalar(item.pulse * 0.95);
     item.body.scale.setScalar(1 + item.pulse * 0.1);
   });
 
   coilMeshes.forEach((item) => {
     item.pulse = Math.max(0, item.pulse - dt * 1.8);
-    const intensity = item.pulse * 1.2;
-    item.body.material.emissive = new THREE.Color(item.baseColor).multiplyScalar(intensity);
+    item.body.material.emissive.setHex(item.baseColor).multiplyScalar(item.pulse * 1.2);
     item.group.scale.setScalar(1 + item.pulse * 0.18);
   });
 
@@ -986,36 +885,25 @@ function animate(now) {
     );
     communicationBeam.visible = communicationBeam.material.opacity > 0.02;
     if (communicationBeam.visible) {
-      const obuPosition = new THREE.Vector3();
+      // 原位更新两个端点，避免每帧 setFromPoints 重建 BufferAttribute
+      const obuPosition = ANIM_SCRATCH_VECTOR;
       obuUnit()?.getWorldPosition(obuPosition);
       const endpoint = communicationAntennaForVehicle();
-      const antennaPosition = new THREE.Vector3(0, 3.9, deviceInfo.rsu.z);
+      const antennaPosition = ANIM_SCRATCH_VECTOR_B.set(0, 3.9, deviceInfo.rsu.z);
       if (endpoint) {
         endpoint.mesh.getWorldPosition(antennaPosition);
-        endpoint.mesh.material.emissive = new THREE.Color(deviceInfo.rsu.color).multiplyScalar(0.95);
+        endpoint.mesh.material.emissive.setHex(deviceInfo.rsu.color).multiplyScalar(0.95);
         endpoint.mesh.scale.setScalar(1.14);
       }
-      const points = [
-        antennaPosition,
-        obuPosition,
-      ];
-      communicationBeam.geometry.setFromPoints(points);
+      const position = communicationBeam.geometry.getAttribute("position");
+      if (position && position.count >= 2) {
+        position.setXYZ(0, antennaPosition.x, antennaPosition.y, antennaPosition.z);
+        position.setXYZ(1, obuPosition.x, obuPosition.y, obuPosition.z);
+        position.needsUpdate = true;
+        communicationBeam.geometry.computeBoundingSphere();
+      }
     }
   }
-
-  links.forEach((link) => {
-    if (link.active) link.clock += dt * link.speed;
-    link.line.material.opacity = THREE.MathUtils.lerp(
-      link.line.material.opacity,
-      link.active ? 0.85 : 0.18,
-      0.12
-    );
-    const target = link.active ? 0.95 : 0;
-    link.packets.forEach((packet) => {
-      packet.mesh.position.copy(link.path.getPoint((link.clock + packet.offset) % 1));
-      packet.mesh.material.opacity = THREE.MathUtils.lerp(packet.mesh.material.opacity, target, 0.12);
-    });
-  });
 
   if (cameraTween) {
     cameraTween.t = Math.min(1, cameraTween.t + dt * 1.6);
@@ -1031,17 +919,22 @@ function animate(now) {
   labels.forEach((label) => label.lookAt(camera.position));
   controls.update();
   renderer.render(scene, camera);
+  if (badge) badge.update(LOOP ? LOOP.fps : 0);
 }
+
+let badge = null;
 
 els.play.addEventListener("click", () => {
   playing = !playing;
   els.play.textContent = playing ? "暂停" : "播放";
+  LOOP?.hold(playing ? 4000 : 600);
 });
 
 els.scrubber.addEventListener("input", () => {
   playing = false;
   els.play.textContent = "播放";
   setEvent(Number(els.scrubber.value));
+  LOOP?.hold(700);
 });
 
 els.speed.addEventListener("change", () => {
@@ -1056,7 +949,26 @@ els.select.addEventListener("change", () => {
 
 window.addEventListener("resize", resize);
 buildScene();
+initBodyColorSelect();
 resize();
+
+// 无头验证 / 控制台调试接口（与 lanes.js 的 window.__LANES__ 对应）
+window.__REPLAY__ = {
+  get scene() { return scene; },
+  get replay() { return replay; },
+  get index() { return currentIndex; },
+  setEvent,
+  applyVehicle,
+  get stats() {
+    return LOOP ? { fps: LOOP.fps, spinning: LOOP.spinning, errors: LOOP.errorCount } : null;
+  },
+};
+LOOP = createRenderLoop({
+  onFrame,
+  keepAlive: stillAnimating,
+  minInterval: frameInterval(GPU.software),
+});
+badge = mountGpuBadge(document.querySelector(".event-head") || renderer.domElement.parentElement, GPU, "inline");
 loadIndex().catch((error) => {
   els.title.textContent = "数据加载失败";
   els.timeline.replaceChildren();
@@ -1070,4 +982,4 @@ loadIndex().catch((error) => {
   item.append(time, summary);
   els.timeline.append(item);
 });
-requestAnimationFrame(animate);
+LOOP.wake(80);
