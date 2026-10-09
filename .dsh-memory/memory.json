@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "m-mv0lnyc4-adfj6i",
+      "text": "etclog 仓库（F:\\caochun\\etclog）约定：新增功能一律新开文件、不修改 merge_vehicle_logs.py（它是在用的原脚本，ES 版本是 merge_vehicle_logs_es.py）；README.md 里不写真实车牌（用 <车牌> 占位），因为历史上专门有过一次提交把车牌从 README 移除；merged_*.md 与 replay/data/ 都已在 .gitignore 中。",
+      "tags": [
+        "etclog",
+        "约定",
+        "git"
+      ],
+      "createdAt": 1791528252052,
+      "updatedAt": 1791528252052,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv0lnyci-hp25f3",
+      "text": "etclog 的 Elasticsearch 环境：http://192.168.22.212:9200（ES 7.17.0，cluster cvicse，无认证）。索引命名 ump_<站点>_<yyyy.MM>，例如 ump_37016433_2026.07（约 1870 万文档）。关键字段：message=完整原始日志行（行首时间戳可被 local 脚本正则直接解析）、time=本地时间字符串、@timestamp=UTC、logType∈{laneLog,etc,mtc,data,fee,namelist}、landId=车道号（部分原始帧日志该字段缺失，需从正文 [37016433xx] 兜底）、vlp=车牌（有 .keyword 子字段可做聚合发现）。",
+      "tags": [
+        "etclog",
+        "elasticsearch",
+        "环境"
+      ],
+      "createdAt": 1791528252066,
+      "updatedAt": 1791528252066,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv0lo0gk-x0vjpc",
+      "text": "etclog 的 ES 版归并（merge_vehicle_logs_es.py）召回限制：message 是分词字段而原脚本是子串匹配，两者不等价。默认模式靠 match_phrase + 前缀通配 + 车道重扫（landId 字段或正文含车道号）达到约 277/278 行；唯一漏行是「key 落在更长 token 内部且不在 token 开头」，例如 |流水Id:G0015... 分词后整条为 id:g0015...，只有 --full-window-scan 能拿到。ES 侧只做高召回候选，是否纳入一律由原脚本的 core.line_matches（子串 + 明文车牌防污染）决定，因此默认模式按 key 命中的行是严格模式的子集。",
+      "tags": [
+        "etclog",
+        "召回",
+        "限制"
+      ],
+      "createdAt": 1791528254804,
+      "updatedAt": 1791528254804,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    }
+  ]
+}

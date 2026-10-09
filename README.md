@@ -118,6 +118,140 @@ discovered/merged_SAMPLE_20260514_081000.md
 
 部分 `merged_*.md` 文件顶部的 `## 解读摘要` 是人工补充的解读，不属于脚本自动生成内容。
 
+## 从 Elasticsearch 取日志
+
+`merge_vehicle_logs_es.py` 是同一套归并逻辑的 Elasticsearch 版本：日志不再从本地 `.log` 目录读，而是从 ES 的 `message` 字段取，其余部分（明文车牌防污染、关联键多轮扩展、线圈物理事件补齐、Markdown 输出格式）直接复用 `merge_vehicle_logs.py`。因此它生成的 `merged_*.md` 照样能转成 3D 回放数据。
+
+默认连接 `http://192.168.22.212:9200`，可用 `--es-host` 覆盖。
+
+### 字段对应关系
+
+实测环境为 ES 7.17，索引形如 `ump_<站点>_<yyyy.MM>`：
+
+| ES 字段 | 含义 | 对应原脚本 |
+| --- | --- | --- |
+| `message` | 完整原始日志行（含 `[时间] [车道] [级别]` 前缀） | `.log` 文件里的一行 |
+| `time` | 本地时间字符串，如 `2026-07-01 12:06:54.640` | 行首时间戳 |
+| `@timestamp` | UTC 时间，date 类型 | 时间窗口过滤与排序 |
+| `logType` | `laneLog` / `etc` / `mtc` / `data` / `fee` / `namelist` | `file_kind()` 推导出的 `sources` |
+| `landId` | 车道号，如 `3701643319` | 文件名/正文里的 `37016433xx` |
+| `vlp` | 车牌（`keyword` 子字段用于聚合发现） | 明文车牌 |
+
+时间窗口用 `@timestamp` 过滤；每行的时间戳优先从 `message` 行首解析（本地时间），解析不到时依次退化为 `--time-field` 字段、`time` 字段、`@timestamp`（后两者会转成本地时区）。默认 `--time-field` 本身就是 `@timestamp`，所以实际顺序是 `message` → `@timestamp` → `time` → `@timestamp`。
+
+### 快速开始
+
+先看有哪些索引，以及某个时间点会自动命中哪个索引（`--index` 支持通配，并会按索引名里的月份自动裁剪）：
+
+```bash
+python merge_vehicle_logs_es.py --index 'ump_*' --at '2026-07-01 12:06:54' --list-indices
+```
+
+归并一辆车的一次通行，参数与原脚本同名：
+
+```bash
+python merge_vehicle_logs_es.py <车牌> \
+  --index 'ump_37016433_2026.07' \
+  --at '2026-07-01 12:06:54' \
+  --window-minutes 5 \
+  -o merged_<车牌>_20260701_120654.md
+```
+
+从 ES 归并必须限定时间范围（`--at` 配 `--window-minutes`，或者 `--from`/`--to`），否则会在 18M 文档的索引上全表扫描：
+
+```bash
+python merge_vehicle_logs_es.py <车牌> --index 'ump_37016433_2026.07' \
+  --from '2026-07-01 12:00:00' --to '2026-07-01 12:20:00' -o merged_sample.md
+```
+
+发现候选车辆（用 `vlp.keyword` 聚合，比整窗扫描快很多）：
+
+```bash
+python merge_vehicle_logs_es.py --discover --index 'ump_37016433_2026.07' \
+  --at '2026-07-01 12:06:54' --window-minutes 10 --limit 10
+```
+
+不知道车牌时批量归并：
+
+```bash
+python merge_vehicle_logs_es.py --auto --index 'ump_37016433_2026.07' \
+  --at '2026-07-01 12:06:54' --window-minutes 10 \
+  --min-lines 20 --limit 10 --discover-output-dir discovered
+```
+
+已知车牌时先列候选通行，再挑锚点时间：
+
+```bash
+python merge_vehicle_logs_es.py <车牌> --index 'ump_37016433_2026.07' \
+  --at '2026-07-01 12:06:54' --window-minutes 20 --list-events
+```
+
+### 常用参数
+
+- `--index`：索引模式（支持 `*` 与逗号），默认 `ump_*`；给出时间范围时会按索引名里的 `yyyy.MM` 自动裁剪到相关月份（`--no-auto-index` 关闭）。
+- `--es-host` / `--es-user` / `--es-password` / `--no-verify-tls` / `--timeout`：ES 连接。
+- `--time-field` / `--message-field` / `--kind-field` / `--lane-field` / `--plate-field`：字段名，换一套索引体系时改这里。
+- `--log-type`：只查指定 `logType`（可重复），例如 `--log-type laneLog`。
+- `--extra-query`：追加任意 ES 查询 JSON 作为 filter 片段，例如按 `sectionId` 过滤。
+- `--max-docs` / `--page-size`：**单次**检索的拉取上限与分页大小，默认 `20000` / `1000`，两者都必须是 ≥ 1 的整数。触顶会告警，并在 Markdown 头部写 `es_truncated: true`；若确实存在但被 `--max-docs` 截断，头部会带上命中总数。PIT 不可用时会退化为 `from/size`，此时单次最多只能取到 10000 条。
+- `--min-lines`：候选事件的最小行数（与原脚本一致）；在 `--discover`/`--auto` 下它同时作为车牌聚合的 `min_doc_count`，也就是按窗口内的文档数先过滤一道。
+- `--full-window-scan`：整窗全量拉取后在本地做子串匹配，语义与原脚本完全等价（较慢，窗口大时要调大 `--max-docs`）。
+- `--no-lane-scan`：关闭「已发现车道全量重扫」。
+- 以及与原脚本一致的 `--at`、`--from`/`--to`、`--window-minutes`、`--rounds`、`--gap-minutes`、`--min-lines`、`--limit`、`-o`。
+
+### 查询策略与召回
+
+`message` 是 text 字段、按 token 检索，而原脚本是子串匹配，两者并不等价。所以 ES 侧只负责「高召回候选」，最终某一行是否纳入一律由原脚本的 `line_matches`（子串匹配 + 明文车牌防污染）决定：
+
+1. 每个关联 key 生成 `match_phrase` 加一条前缀通配，这样 `鲁UG6595` 也能命中 token `ug6595_1` 这种带车牌颜色后缀的形态；
+2. 拿到车道后，对该车道在窗口内做一次全量重扫（`landId` 字段匹配，或正文里出现该车道号），兜住 token 边界的漏召回；
+3. 仍会漏的是「key 落在更长 token 内部、且不在 token 开头」的行，例如 `|流水Id:G0015370050030202091020260701120003590801` 分词后整条是 `id:g0015...`。这类行只有 `--full-window-scan` 能拿到。
+
+实测一次 5 分钟窗口的单车归并：默认模式 277 行，`--full-window-scan` 278 行，并且默认模式**命中 key 的那些行**是严格模式结果的子集——不会多出不属于该车的行（实测多出 0 条，缺 1 条）。日常分析用默认模式，需要绝对完整时用 `--full-window-scan`。
+
+严格来说，子集关系只对「按 key 命中的行」成立：线圈/车检器那一段是另一条按车道查询的路径，如果车道查询漏了某条落杆信号，`coil_passages` 有可能把前后两个物理过车合并成一个，选出的过车段就和严格模式不完全一致。它带来的只会是同车道、无车牌的车检器行，不会引入别的车的数据。
+
+### 与原脚本的差异
+
+- 去重键从 `(文件路径, 行号)` 换成 `(_index, _id)`。
+- `## Timeline` 里每条来源写成 `` `logType:索引#文档id` ``，便于回 ES 复查原文。
+- Markdown 头部多出 `source`、`es_host`、`index`、`es_docs_scanned`、`es_requests`（检索次数，不含 PIT/元数据请求），截断时还有 `es_truncated`。控制台那行会同时给出检索次数和 HTTP 总请求数。
+- `--log-dir` 不再存在；`--at` 变成必填（或改用 `--from`/`--to`）。
+
+## 从 ES 到可视化：完整跑一遍
+
+```bash
+# 1) 从 ES 归并一辆车，生成 merged_*.md
+python merge_vehicle_logs_es.py <车牌> --index 'ump_37016433_2026.07' \
+  --at '2026-07-01 12:06:54' --window-minutes 5 \
+  -o merged_<车牌>_20260701_120654.md
+
+# 2) 转成 3D 回放数据（写出 replay/data/*.json 和 replay/data/index.json）
+python replay/generate_replay_data.py merged_<车牌>_20260701_120654.md --out-dir replay/data
+
+# 3) 在仓库根目录起静态服务
+python -m http.server 8765
+
+# 4) 浏览器打开
+#    http://localhost:8765/replay/index.html
+```
+
+页面左上角的下拉框会自动列出 `replay/data/index.json` 里的全部车辆事件，选中后即可播放。也可以批量生成多辆车再一起转回放数据：
+
+```bash
+python merge_vehicle_logs_es.py --auto --index 'ump_37016433_2026.07' \
+  --at '2026-07-01 12:06:54' --window-minutes 10 \
+  --min-lines 20 --limit 10 --discover-output-dir discovered
+
+python replay/generate_replay_data.py discovered/merged_*.md --out-dir replay/data
+```
+
+三点注意：
+
+- 必须从仓库根目录启动 `python -m http.server`，因为页面用相对路径 `./data/index.json` 取数据。
+- 必须通过 `http://` 访问。直接用 `file://` 打开 `replay/index.html` 会因为浏览器的 ES module/跨域限制而加载不了 three.js。
+- 如果不用 8765 端口，换成 `python -m http.server 9000`，URL 里的端口同步改掉即可。页面左上角下拉框为空，通常是因为第 2 步没跑或 `replay/data/index.json` 不存在。
+
 ## 3D 回放
 
 `replay/` 目录里有一个基于 Three.js 的静态回放器，可以把 `merged_*.md` 转成车辆过站/出站的语义回放。
@@ -153,11 +287,20 @@ http://localhost:8765/replay/index.html?file=merged_SAMPLE_20260514_080028.json
 - 左上角下拉框选择车辆事件。
 - 底部 `播放/暂停` 控制回放，进度条可以拖到任意日志事件。
 - 倍速支持 `0.05x`、`0.1x`、`0.25x`、`0.5x`、`1x`、`2x`、`4x`。
+- 右上角四个视角按钮：`全景`、`车道现场`、`虚拟机房`、`省中心`，点击后相机平滑切到对应视角。
 - 鼠标左键拖拽旋转视角，滚轮缩放，右键拖拽平移视角。
 - 右侧面板只显示本次通行标题和日志列表；当前事件会高亮，并跟随播放自动滚动。
 - 点击右侧任意日志行，可以跳到对应事件并暂停播放。
 
-回放器会按 ETC 专用车道和 ETC/MTC 混合车道的布局示意来建模：收费岛、岗亭、车牌识别、车型识别、称重/治超、前后 RSU/ETC 天线、一体化集成设备、车道摄像机、栏杆、费显/LED，以及交易服务、名单服务、计费服务、消息/MQ、流水/Redis 等服务节点。车辆模型上带有 OBU 车载单元；当日志事件属于 RSU/OBU 通信时，会高亮 RSU 到车辆 OBU 的通信连线。右侧时间线同步显示对应日志原文。
+场景分成两块，中间用一条链路连接：
+
+- **车道现场（通行设备）**：沿车辆行驶方向（+Z）按实际过车顺序排布：`车牌识别 → 称重/治超 → 车型识别 → 车检器1 → 前 ETC 天线（预交易）→ 车检器2 → CPC 读卡 → 车道控制器 → 车检器6（存在线圈）→ 后 ETC 天线（交易）→ 费显/LED → 车检器7（落杆线圈）→ 栏杆`。线圈和称重平台在路面上，栏杆、费显、CPC 读卡、车道控制器放在右侧收费岛上，车牌识别/车型识别/车道摄像机用立柱横臂悬在车道上，前后 RSU 由龙门架承载，岗亭、关道设备、存在线圈标注等按车道类型显示。
+- **虚拟机房（收费系统）**：交易服务、名单服务、计费服务、消息/MQ、流水/Redis 各自一台机柜，独立放在车道右侧的玻璃机房里（另有精密空调、配电柜、核心交换/ODF 等非事件设备作为机房配套），不再和通行设备挤在车道旁。
+- **虚拟省中心**：在机房更外侧，建模为带窗带、天线和信号灯的多层建筑。
+
+两条链路跟着事件亮起并在路径上跑数据包：事件落在机房服务上时点亮「车道 → 机房」链路；与省中心交互的服务（交易、名单、计费、消息/MQ）还会点亮「机房 → 省中心」链路，而流水/Redis 属于本地落库，只点亮车道到机房这一段。车辆模型上带有 OBU 车载单元；当日志事件属于 RSU/OBU 通信时，会高亮 RSU 到车辆 OBU 的通信连线；`success` 事件会把栏杆臂抬起（绕岛上的转轴旋转），`reject` 事件落杆。右侧时间线同步显示对应日志原文。
+
+车辆本身按日志时间单向沿车道推进；当前事件对应的设备或服务节点会高亮。这样可以避免后台补写流水、牌识匹配、MQ 回执等事件把车辆“拉回”到前面的设备位置。左侧图例按「通行设备 · 车道现场」和「收费系统 · 虚拟机房」分组；被车道类型过滤掉的设备（例如 ETC 车道里的称重/治超、CPC 读卡）平时不显示，但当事件正好落在它身上时会临时显示，避免高亮一个看不见的对象。
 
 车辆本身按日志时间单向沿车道推进；当前事件对应的设备或服务节点会高亮。这样可以避免后台补写流水、牌识匹配、MQ 回执等事件把车辆“拉回”到前面的设备位置。
 
