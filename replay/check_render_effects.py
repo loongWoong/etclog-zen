@@ -1592,6 +1592,19 @@ TEMPLATES = {
 
         out.bloom = bloomReport(renderer, scene, camera, createBloomPipeline);
         out.pageBloomEnabled = typeof api.bloom;
+
+        // ---- 深链落点：多车道页下钻会带 ?at=HH:MM:SS.mmm，必须落在那份日志里最近的时刻 ----
+        //      命中：这份日志第一条事件是 12:06:54.523，按 12:06:54.524 找应当落在最前面几条；
+        //      未命中：给一个离日志很远的时刻，必须拒绝（返回 null 且不改动时间轴）。
+        if (api.seekToClock) {
+          const hitMs = api.seekToClock("12:06:54.524");   // 返回的是"与目标的毫秒偏差"，没跳成返回 null
+          const afterHit = api.currentEvent ? api.currentEvent() : null;
+          const missMs = api.seekToClock("11:00:00.000");
+          const afterMiss = api.currentEvent ? api.currentEvent() : null;
+          out.deepLinkSeek = { hitMs: hitMs, afterHit: afterHit, missMs: missMs, afterMiss: afterMiss };
+          api.setEvent(0);
+          await sleep(200);
+        }
       } catch (error) {
         out.fatal = String((error && error.stack) || error);
       }
@@ -1767,6 +1780,172 @@ TEMPLATES = {
         out.bloom = bloomReport(api.STATE.renderer, api.STATE.scene, api.STATE.camera, createBloomPipeline);
         out.pageBloomEnabled = Boolean(api.STATE.bloom && api.STATE.bloom.enabled);
         out.loop = { fps: api.LOOP.fps, errors: api.LOOP.errorCount };
+
+        // ---- 交互：点车道 → 中间绘图区高亮；点清单里的车 → 下钻单车道通行回放；返回多车道 ----
+        // 放在最后一段：这一段会点车道、切时间轴、下钻再返回，之后不再做别的像素统计。
+        {
+          const incidents = api.incidents();
+          const byKind = { block: 0, timeout: 0, both: 0 };
+          for (const item of incidents) {
+            const isBlock = item.kinds.indexOf("block") >= 0;
+            const isTimeout = item.kinds.indexOf("timeout") >= 0;
+            if (isBlock && isTimeout) byKind.both += 1;
+            else if (isBlock) byKind.block += 1;
+            else if (isTimeout) byKind.timeout += 1;
+          }
+          const inter = { incidentCount: incidents.length, byKind: byKind };
+          // 浮层多了以后要防"面板互相压住"：把每块面板的盒子量下来两两比一遍
+          const hitBox = (a, b) => Boolean(a && b && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom);
+          const boxOf = (selector) => {
+            const node = document.querySelector(selector);
+            if (!node || node.hidden || node.offsetParent === null) return null;
+            const box = node.getBoundingClientRect();
+            return { top: Math.round(box.top), bottom: Math.round(box.bottom), left: Math.round(box.left), right: Math.round(box.right) };
+          };
+          const layoutReport = () => {
+            const hud = boxOf(".hud");
+            const floatPanel = boxOf("#vehicleFloat");
+            const alertPanel = boxOf("#alertPanel");
+            const focusBar = boxOf("#focusBar");
+            const stage = boxOf("#scene");
+            const timeoutPill = boxOf("#timeoutPill");
+            const body = document.querySelector("#vehicleFloatBody");
+            const pairs = [["hud", hud], ["float", floatPanel], ["alert", alertPanel], ["focus", focusBar], ["timeout", timeoutPill]];
+            const collisions = [];
+            for (let i = 0; i < pairs.length; i += 1) {
+              for (let j = i + 1; j < pairs.length; j += 1) {
+                if (hitBox(pairs[i][1], pairs[j][1])) collisions.push(`${pairs[i][0]}×${pairs[j][0]}`);
+              }
+            }
+            return {
+              collisions: collisions,
+              rows: body ? body.querySelectorAll(".vf-item").length : 0,
+              scrolls: body ? body.scrollHeight > body.clientHeight + 1 : false,
+              insideStage: Boolean(floatPanel && stage && floatPanel.top >= stage.top - 1 && floatPanel.bottom <= stage.bottom + 1),
+              floatBox: floatPanel,
+              hudBox: hud,
+              stageBox: stage,
+            };
+          };
+          api.setFlash(false);                     // 超时红闪会逐帧变色，量像素时要先关掉
+          api.STATE.playing = false;
+          api.LOOP.hold(600);
+          const home = { position: api.STATE.camera.position.clone(), target: api.STATE.controls.target.clone() };
+          api.STATE.camera.position.set(0, 58, 76);
+          api.STATE.controls.target.set(0, 0, 2);
+          api.STATE.controls.update();
+          api.seek(api.STATE.span * 0.42);
+          await sleep(1200);
+          const beforeClick = grab(api.STATE.renderer, api.STATE.scene, api.STATE.camera);
+
+          // 清单：默认列全部车道的拦截/超时车，带车型图
+          const rowsAll = api.vehicleFloatRows();
+          inter.rowsAll = rowsAll.length;
+          inter.iconShapes = rowsAll.length ? rowsAll[0].iconShapes : 0;
+          inter.iconWheels = rowsAll.length ? rowsAll[0].iconWheels : 0;
+          inter.firstRow = rowsAll.length ? { laneId: rowsAll[0].laneId, passage: rowsAll[0].passage, plate: rowsAll[0].plate, badges: rowsAll[0].badges } : null;
+          inter.filters = { block: api.setFilter("block"), timeout: api.setFilter("timeout"), all: api.setFilter("all") };
+          inter.layoutIdle = layoutReport();
+
+          // 1) 点左侧车道 → 三维高亮 + 清单收到这条车道
+          const laneId = rowsAll.length ? rowsAll[0].laneId : api.STATE.lanes[0].id;
+          api.click(".lane-item[data-lane=\"" + laneId + "\"]");
+          await sleep(300);
+          await until(() => !api.STATE.camTween, 8000);
+          await sleep(400);
+          const afterSelect = grab(api.STATE.renderer, api.STATE.scene, api.STATE.camera);
+          // 高亮层自己值多少像素：同机位、同游标，只把这一层藏起来再抓一帧
+          const highlightGroup = api.model(laneId).highlight.group;
+          highlightGroup.visible = false;
+          const withoutGlow = grab(api.STATE.renderer, api.STATE.scene, api.STATE.camera);
+          highlightGroup.visible = true;
+          const withGlow = grab(api.STATE.renderer, api.STATE.scene, api.STATE.camera);
+          inter.laneClick = {
+            laneId: laneId,
+            incidentsInLane: incidents.filter((item) => item.laneId === laneId).length,
+            selectedLane: api.selectedLane,
+            highlight: api.highlightState(),
+            rowsAfter: api.vehicleFloatRows().length,
+            scope: (document.querySelector("#vehicleFloatScope") || {}).textContent || "",
+            swimSelected: document.querySelectorAll(".swim-row.sel").length,
+            laneItemSelected: document.querySelectorAll(".lane-item.sel").length,
+            pixels: diffFrames(beforeClick, afterSelect),
+            glowPixels: diffFrames(withoutGlow, withGlow),
+          };
+
+          // 2) 点清单里的车辆 → 下钻单车道通行回放（其它车道隐藏、游标停在本趟起点、进度条只覆盖本趟）
+          const focusLane = inter.firstRow ? inter.firstRow.laneId : laneId;
+          api.clearLaneFilter();
+          await sleep(200);
+          api.click("#vehicleFloatBody .vf-item[data-lane=\"" + focusLane + "\"]");
+          await until(() => api.STATE.focus, 5000);
+          await until(() => !api.STATE.camTween, 9000);
+          await sleep(400);
+          const afterFocus = grab(api.STATE.renderer, api.STATE.scene, api.STATE.camera);
+          inter.focusPixels = diffFrames(afterSelect, afterFocus);
+          inter.focus = Object.assign({}, api.focusState(), {
+            rowsInFocus: api.vehicleFloatRows().length,
+            playingRows: document.querySelectorAll(".swim-row.focus").length,
+            hiddenPills: [...document.querySelectorAll(".hud .pill")].filter((p) => p.offsetParent === null).length,
+          });
+          inter.layoutFocus = layoutReport();
+          // 本趟区间播放：从结束前 0.8s 起播，必须停在本趟终点，不许绕回窗口开头
+          api.STATE.t = api.STATE.focus.to - 800;
+          api.STATE.playing = true;
+          api.LOOP.hold(4000);
+          await sleep(800);
+          inter.focusClamp = {
+            t: round(api.STATE.t),
+            to: round(api.STATE.focus.to),
+            playing: api.STATE.playing,
+            overshoot: round(api.STATE.t - api.STATE.focus.to),
+          };
+
+          // 3) 返回多车道 → 8 条车道都回来、画面回到点之前的样子
+          api.click("#focusBack");
+          await until(() => !api.STATE.focus, 5000);
+          await until(() => !api.STATE.camTween, 9000);
+          await sleep(400);
+          inter.back = Object.assign({}, api.focusState(), {
+            vsFocus: diffFrames(afterFocus, grab(api.STATE.renderer, api.STATE.scene, api.STATE.camera)),
+          });
+          // 4) 有单车日志的那一趟：聚焦条上的深链要指向 index.html?file=…&at=本趟开始时刻
+          //    （窗口内只有 鲁UG6595 那一份单车日志；这几趟都不是拦截/超时，所以只能从过程详情下钻）
+          const soloLane = "370164335F";
+          const soloPassage = 2;
+          api.enterFocus(soloLane, soloPassage);
+          await until(() => !api.STATE.camTween, 9000);
+          await sleep(200);
+          const soloState = api.focusState();
+          const detailLink = document.querySelector("#detailSolo");
+          inter.soloLink = {
+            laneId: soloState.laneId,
+            passage: soloState.passage,
+            plate: soloState.soloPlate,
+            href: soloState.deepLink,
+            detailHref: detailLink ? detailLink.getAttribute("href") : null,
+          };
+          api.click("#focusBack");
+          await until(() => !api.STATE.focus, 5000);
+          await until(() => !api.STATE.camTween, 9000);
+          // 收尾：重置页面（清选择/过滤/游标），再核对画面回到交互之前
+          api.click("#resetBtn");
+          await until(() => !api.STATE.camTween, 9000);
+          api.seek(api.STATE.span * 0.42);
+          await sleep(1200);
+          const restored = grab(api.STATE.renderer, api.STATE.scene, api.STATE.camera);
+          inter.restoredVsBaseline = diffFrames(beforeClick, restored);
+          inter.resetState = {
+            selectedLane: api.selectedLane,
+            selected: api.STATE.selected ? { laneId: api.STATE.selected.lane.id, passage: api.STATE.selected.passage.i } : null,
+            laneFilter: api.STATE.laneFilter,
+            rows: api.vehicleFloatRows().length,
+            highlight: api.highlightState(),
+            scope: (document.querySelector("#vehicleFloatScope") || {}).textContent || "",
+          };
+          api.setFlash(true);
+          out.interaction = inter;
+        }
       } catch (error) {
         out.fatal = String((error && error.stack) || error);
       }
@@ -2021,6 +2200,17 @@ def report_index(payload: dict, report: Report) -> None:
     report_prop_shadows("index", payload, report)
     report_barrier_index(payload, report)
     report_vehicle_shadows(payload, report, "index")
+    # 多车道页下钻带过来的 ?at= 时刻：只认这份日志里真有的时刻
+    seek = payload.get("deepLinkSeek") or {}
+    if seek:
+        hit_ms = seek.get("hitMs")
+        after = seek.get("afterHit") or {}
+        report.check(hit_ms is not None and float(hit_ms) < 3000 and str(after.get("time", "")).startswith("2026-07-01 12:06:5"),
+                      "index：?at= 深链落在最近的那条事件上",
+                      f"偏差 {hit_ms} ms → 事件 #{after.get('index')} {after.get('time')}")
+        report.check(seek.get("missMs") is None and (seek.get("afterMiss") or {}).get("index") == after.get("index"),
+                      "index：?at= 给的时刻离日志太远时拒绝跳转（时间轴不动）",
+                      f"偏差 {seek.get('missMs')} · 游标 {(seek.get('afterMiss') or {}).get('index')} / 命中后 {after.get('index')}")
 
 
 def num(value, default: float = 9.0) -> float:
@@ -2294,6 +2484,118 @@ def report_lanes(payload: dict, report: Report) -> None:
                   f"开={toggle.get('on')} 关={toggle.get('off')} 再开={toggle.get('back')}")
     report_barrier_lanes(payload, report)
     report_vehicle_shadows(payload, report, "lanes")
+    report_interaction(payload, report, "lanes")
+
+
+def report_interaction(payload: dict, report: Report, page: str) -> None:
+    """多界面交互：点车道 → 三维高亮；点清单车辆 → 下钻单车道通行回放；返回后必须回到原样。"""
+    inter = payload.get("interaction") or {}
+    if not inter:
+        report.check(False, f"{page}：交互探针有数据", "无 interaction 数据")
+        return
+    rows_all = num(inter.get("rowsAll"), 0)
+    icon_shapes = num(inter.get("iconShapes"), 0)
+    icon_wheels = num(inter.get("iconWheels"), 0)
+    report.check(num(inter.get("incidentCount"), 0) >= 20,
+                  f"{page}：拦截 / 超时车辆清单非空（来自 lanes.json 已判定的事实）",
+                  f"清单 {inter.get('incidentCount')} 辆，构成 {inter.get('byKind')}")
+    report.check(rows_all == num(inter.get("incidentCount"), -1),
+                  f"{page}：悬浮清单默认列出全部车道的拦截 / 超时车辆",
+                  f"DOM 行 {rows_all} / 数据 {inter.get('incidentCount')}")
+    report.check(icon_shapes >= 6 and icon_wheels >= 2,
+                  f"{page}：每条车辆都带车型图（轮廓 + 车轮，轴位与三维模型同一套 axleLayout）",
+                  f"首行图元 {icon_shapes} 个、车轮 {icon_wheels} 个")
+    filters = inter.get("filters") or {}
+    total = num(inter.get("incidentCount"), 0)
+    report.check(0 < num(filters.get("block"), 0) <= total and 0 < num(filters.get("timeout"), 0) <= total,
+                  f"{page}：拦截 / 超时两个筛选片各自都能筛出车",
+                  f"拦截 {filters.get('block')} · 超时 {filters.get('timeout')} · 全部 {total}（{filters.get('all')}）")
+
+    click = inter.get("laneClick") or {}
+    idle_layout = inter.get("layoutIdle") or {}
+    focus_layout = inter.get("layoutFocus") or {}
+    report.check(not (idle_layout.get("collisions") or []),
+                  f"{page}：多车道视图里状态胶囊 / 悬浮清单 / 超时告警 / 超时胶囊 / 聚焦条互不压住",
+                  f"重叠 {idle_layout.get('collisions') or '无'}　胶囊盒 {idle_layout.get('hudBox')}　清单盒 {idle_layout.get('floatBox')}")
+    report.check(num(idle_layout.get("rows"), 0) >= 20 and bool(idle_layout.get("scrolls")) and bool(idle_layout.get("insideStage")),
+                  f"{page}：二十多辆车在浮层里滚动翻看，浮层不越过绘图区",
+                  f"行 {idle_layout.get('rows')} 可滚动 {idle_layout.get('scrolls')} 在绘图区内 {idle_layout.get('insideStage')}")
+    report.check(not (focus_layout.get("collisions") or []),
+                  f"{page}：下钻后聚焦条也不和胶囊 / 清单重叠",
+                  f"重叠 {focus_layout.get('collisions') or '无'}")
+    highlight = click.get("highlight") or {}
+    lit = highlight.get("lit") or []
+    glow = click.get("glowPixels") or {}
+    report.check(click.get("selectedLane") == click.get("laneId"),
+                  f"{page}：点左侧车道后该车道成为选中车道",
+                  f"选中 {click.get('selectedLane')} / 点的 {click.get('laneId')}")
+    report.check(len(lit) == 1 and lit[0].get("laneId") == click.get("laneId") and num(lit[0].get("opacity"), 0) > 0.05,
+                  f"{page}：中间绘图区只有对应的那条车道被点亮（高亮层挂在模型上）",
+                  f"亮着的车道 {lit}")
+    report.check(num(glow.get("changedRatio"), 0) > 0.004 and num(glow.get("brighterRatio"), 0) > num(glow.get("darkerRatio"), 0),
+                  f"{page}：高亮层确实画进了画面（藏起来画面变、且是变暗）",
+                  f"变化 {glow.get('changedRatio')} 提亮 {glow.get('brighterRatio')} 变暗 {glow.get('darkerRatio')} 平均 {glow.get('meanDelta')}/255")
+    report.check(num(click.get("pixels", {}).get("changedRatio"), 0) > 0.002,
+                  f"{page}：点车道后中间绘图区画面确实变了（机位跟到那条车道）",
+                  f"变化 {click.get('pixels', {}).get('changedRatio')}")
+    report.check(click.get("swimSelected") == 1 and click.get("laneItemSelected") == 1,
+                  f"{page}：选中联动到泳道行与左侧车道列表",
+                  f"泳道选中 {click.get('swimSelected')} · 列表选中 {click.get('laneItemSelected')}")
+    report.check(click.get("rowsAfter") == click.get("incidentsInLane") and str(click.get("laneId")) in str(click.get("scope")),
+                  f"{page}：点车道后悬浮清单收到这条车道",
+                  f"行数 {click.get('rowsAfter')} / 该车道 {click.get('incidentsInLane')} 辆 范围「{click.get('scope')}」")
+
+    focus = inter.get("focus") or {}
+    report.check(bool(focus.get("active")), f"{page}：点清单里的车辆后下钻到单车道通行回放",
+                  f"focus={focus.get('active')} lane={focus.get('laneId')} 过程 #{focus.get('passage')}")
+    report.check(focus.get("bodyClass") and not focus.get("focusBarHidden"),
+                  f"{page}：下钻后出现「单车道通行回放」聚焦条",
+                  f"body.single-lane={focus.get('bodyClass')} 聚焦条隐藏={focus.get('focusBarHidden')}")
+    hidden_lanes = focus.get("hiddenLanes") or []
+    report.check(num(focus.get("visibleLanes"), 0) == 1 and focus.get("laneId") not in hidden_lanes and len(hidden_lanes) == 7,
+                  f"{page}：下钻后只渲染被下钻的那条车道",
+                  f"可见 {focus.get('visibleLanes')}（{focus.get('laneId')}）隐藏 {hidden_lanes}")
+    report.check(focus.get("focusRows") == 1 and num(focus.get("hiddenRows"), 0) >= 7,
+                  f"{page}：泳道区只留这一条车道的行（其它行不显示）",
+                  f"focused={focus.get('focusRows')} 不可见行={focus.get('hiddenRows')}")
+    report.check(num(focus.get("hiddenPills"), 0) >= 7,
+                  f"{page}：状态胶囊也只留这条车道",
+                  f"隐藏胶囊={focus.get('hiddenPills')}")
+    report.check(focus.get("t") == focus.get("from") and num(focus.get("slider"), -1) == 0,
+                  f"{page}：下钻时游标停在本趟过程起点、进度条只覆盖本趟",
+                  f"t={focus.get('t')} 本趟 {focus.get('from')}~{focus.get('to')} 进度条={focus.get('slider')}")
+    clamp = inter.get("focusClamp") or {}
+    report.check(not clamp.get("playing") and num(clamp.get("overshoot"), 1) <= 1 and num(clamp.get("t"), 0) > 0,
+                  f"{page}：本趟回放走到过程结束就停住（不绕回窗口开头）",
+                  f"t={clamp.get('t')} 终点={clamp.get('to')} 超出={clamp.get('overshoot')} 仍在播放={clamp.get('playing')}")
+    report.check(num(inter.get("focusPixels", {}).get("changedRatio"), 0) > 0.05,
+                  f"{page}：下钻后中间绘图区换上单车道画面（其它车道不再占画面）",
+                  f"变化 {inter.get('focusPixels', {}).get('changedRatio')} 平均 {inter.get('focusPixels', {}).get('meanDelta')}/255")
+
+    back = inter.get("back") or {}
+    report.check(not back.get("active") and num(back.get("visibleLanes"), 0) == 8,
+                  f"{page}：返回多车道后 8 条车道都回来",
+                  f"可见 {back.get('visibleLanes')} focus={back.get('active')}")
+    report.check(num((back.get("vsFocus") or {}).get("changedRatio"), 0) > 0.02,
+                  f"{page}：返回后画面确实换回多车道视图",
+                  f"变化 {(back.get('vsFocus') or {}).get('changedRatio')}")
+    reset = inter.get("resetState") or {}
+    restored = inter.get("restoredVsBaseline") or {}
+    report.check(num(restored.get("changedRatio"), 1) < 0.01,
+                  f"{page}：重置后画面回到交互之前（这一套交互是可逆的）",
+                  f"变化 {restored.get('changedRatio')} 平均 {restored.get('meanDelta')}/255")
+    report.check(not reset.get("selectedLane") and not reset.get("selected") and not reset.get("laneFilter") and num(reset.get("rows"), 0) == num(inter.get("incidentCount"), 0),
+                  f"{page}：重置后选中车道 / 过滤 / 高亮全部清空，清单回到全部车道",
+                  f"selectedLane={reset.get('selectedLane')} 过滤={reset.get('laneFilter')} 行={reset.get('rows')} 高亮={reset.get('highlight')}")
+    deep = focus.get("deepLink")
+    report.note(f"单车日志深链：{'有（' + str(deep) + '）' if deep else '本趟没有对应单车日志（index.json 里只有鲁UG6595 那份），只做页内下钻'}")
+    solo = inter.get("soloLink") or {}
+    href = str(solo.get("href") or "")
+    report.check(
+        solo.get("plate") == "鲁UG6595" and href.startswith("./index.html?file=") and "at=12%3A06%3A54.524" in href,
+        f"{page}：有单车日志的那趟给出「单车日志回放」深链（带本趟时刻）",
+        f"车牌 {solo.get('plate')} · 链接 {href or '(无)'} · 过程详情里的链接 {solo.get('detailHref')}",
+    )
 
 
 def report_site(payload: dict, report: Report, page: str, min_weathering: float = 0.02) -> None:

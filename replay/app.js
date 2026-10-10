@@ -942,11 +942,39 @@ async function loadIndex() {
     : index[0]?.file;
   if (initialFile) {
     els.select.value = initialFile;
-    await loadReplay(initialFile);
+    await loadReplay(initialFile, new URLSearchParams(window.location.search).get("at"));
   }
 }
 
-async function loadReplay(file) {
+/**
+ * 按时刻定位事件：多车道页下钻时会带 `?at=HH:MM:SS.mmm`（那趟过程的开始时刻）。
+ * 只认这一份日志里真有的时刻 —— 差得超过 60s 就当作没有，不硬跳到别的事上。
+ * @returns {number|null} 与目标的毫秒偏差；没跳成返回 null
+ */
+function seekToClock(at) {
+  const events = (replay && replay.events) || [];
+  if (!events.length) return null;
+  const date = String(events[0].time || "").slice(0, 10);
+  const key = at.length <= 12 && date ? `${date} ${at}` : at;
+  const target = Date.parse(key.replace(" ", "T"));
+  if (!Number.isFinite(target)) return null;
+  let best = null;
+  let bestDelta = Infinity;
+  events.forEach((event, index) => {
+    const value = Date.parse(String(event.time || "").replace(" ", "T"));
+    if (!Number.isFinite(value)) return;
+    const delta = Math.abs(value - target);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      best = index;
+    }
+  });
+  if (best === null || bestDelta > 60000) return null;
+  setEvent(best);
+  return bestDelta;
+}
+
+async function loadReplay(file, at = null) {
   const response = await fetch(`./data/${file}`);
   replay = await response.json();
   currentIndex = 0;
@@ -971,6 +999,12 @@ async function loadReplay(file) {
   buildEventPositions();
   renderTimeline();
   setEvent(0);
+  if (at) {
+    const delta = seekToClock(at);
+    if (delta !== null) {
+      els.title.textContent = `${els.title.textContent} · 由多车道页下钻到 ${at}（就近事件差 ${Math.round(delta)} ms）`;
+    }
+  }
 }
 
 function resize() {
@@ -1147,6 +1181,15 @@ window.__REPLAY__ = {
   get barrierTimeline() { return barrierTimeline; },
   get replay() { return replay; },
   get index() { return currentIndex; },
+  /** 自检用：当前事件的时间戳（深链落点核对） */
+  currentEvent() {
+    const event = replay && replay.events ? replay.events[currentIndex] : null;
+    return event ? { index: currentIndex, time: event.time } : null;
+  },
+  /** 自检用：直接走一遍 ?at= 的定位逻辑（返回值与页面内一致） */
+  seekToClock(at) {
+    return seekToClock(at);
+  },
   setEvent,
   applyVehicle,
   get stats() {

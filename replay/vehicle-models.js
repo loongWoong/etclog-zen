@@ -608,7 +608,12 @@ function reflectStrip(length, y, z, x, mat) {
   return box(0.03, 0.1, length, mat, x, y, z);
 }
 
-function axleLayout(kind, dims, axles, wheelbase) {
+/**
+ * 轴位排布：返回各轴在车辆坐标系里的 z（+z 为车头方向）。
+ * 导出是为了让「拦截/超时车辆清单」里的车型图与三维模型用同一套轴位 —— 图上车轮几个、
+ * 排在哪儿，必须和场景里那辆车完全一致，否则同一辆车在图里和图外对不上。
+ */
+export function axleLayout(kind, dims, axles, wheelbase) {
   const half = dims.length / 2;
   const usable = wheelbase && wheelbase > 2 ? wheelbase : dims.length * (kind.startsWith("semi") ? 0.62 : 0.58);
   const front = Math.min(half - 0.85, usable / 2);

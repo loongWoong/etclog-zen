@@ -10,7 +10,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { createRenderer, createRenderLoop, detectGpu, frameInterval, mountGpuBadge } from "./render-runtime.js";
 import { COILS, DEVICES, GANTRIES, LAYOUT, buildArrowField, buildLaneSite } from "./lane-kit.js";
-import { buildVehicleModel, createBrakeController, setShadowTint, setSunDirection } from "./vehicle-models.js";
+import { buildVehicleModel, createBrakeController, setShadowTint, setSunDirection, axleLayout, PLATE_STYLE } from "./vehicle-models.js";
 import { addGroundHaze, applyRenderLook, applyShadowFlags, asphaltMaterial, createBloomPipeline, setupSky } from "./scene-look.js";
 import { buildDistantHorizon, buildScenery } from "./scenery.js";
 import { BARRIER, barrierAngleAt } from "./barrier-arm.js";
@@ -75,6 +75,15 @@ const STATE = {
   showDetails: true,
   flashEnabled: true,
   timeoutKey: "",
+  // 交互：选中的车道（三维高亮跟着它走）、拦截/超时清单、单车道通行回放
+  selectedLane: null,
+  highlightAt: 0,
+  incidents: [],
+  filter: "all",        // all | block | timeout
+  laneFilter: null,     // 只列这条车道的车；null = 全部车道
+  focus: null,          // { laneId, passageI, from, to }：下钻到的单车道通行回放
+  camTween: null,
+  soloLogs: [],         // data/index.json：有单车日志时才能给"单车日志回放"深链
 };
 
 const dom = {};
@@ -119,6 +128,22 @@ async function boot() {
   dom.alertBody = document.getElementById("alertBody");
   dom.alertCount = document.getElementById("alertCount");
   dom.alertToggle = document.getElementById("alertToggle");
+  // 单车道通行回放：聚焦条
+  dom.focusBar = document.getElementById("focusBar");
+  dom.focusLane = document.getElementById("focusLane");
+  dom.focusRange = document.getElementById("focusRange");
+  dom.focusResult = document.getElementById("focusResult");
+  dom.focusReplay = document.getElementById("focusReplay");
+  dom.focusBack = document.getElementById("focusBack");
+  dom.focusDeepLink = document.getElementById("focusDeepLink");
+  // 左侧悬浮：拦截 / 超时车辆清单
+  dom.vehicleFloat = document.getElementById("vehicleFloat");
+  dom.vehicleFloatBody = document.getElementById("vehicleFloatBody");
+  dom.vehicleFloatCount = document.getElementById("vehicleFloatCount");
+  dom.vehicleFloatScope = document.getElementById("vehicleFloatScope");
+  dom.vehicleFloatHint = document.getElementById("vehicleFloatHint");
+  dom.vehicleFloatToggle = document.getElementById("vehicleFloatToggle");
+  dom.vfChips = [...document.querySelectorAll(".vf-chip")];
 
   const response = await fetch("./data/lanes.json", { cache: "no-store" });
   if (!response.ok) throw new Error(`data/lanes.json ${response.status}（先跑 generate_lane_data.py）`);
@@ -143,6 +168,19 @@ async function boot() {
   buildHud();
   bindControls();
   bindSwimResize();
+  // 拦截/超时清单与单车道下钻：数据在 lanes.json 里就能算出来，不依赖单车日志
+  buildIncidents();
+  bindVehicleFloat();
+  bindFocusBar();
+  renderVehicleFloat();
+  // 单车日志清单（index.json 里有什么就认什么）：取不到就当作没有对应日志，本页功能不受影响
+  fetch("./data/index.json", { cache: "no-store" })
+    .then((response) => (response.ok ? response.json() : []))
+    .then((list) => {
+      STATE.soloLogs = Array.isArray(list) ? list : [];
+      if (STATE.focus) renderFocusBar(STATE.focus);
+    })
+    .catch(() => {});
   STATE.badge = mountGpuBadge(document.querySelector(".side-head"), STATE.gpu, "inline");
   window.addEventListener("resize", resize);
   resize();
@@ -390,7 +428,138 @@ function createLaneModel(lane, x) {
   // 初始车也是真车：给它一套刹车灯控制器（否则「本趟过程一直是第 0 趟」的车道永远没有刹车灯）
   site.brakeController = createBrakeController();
   site.vehicleModel?.setBrake?.(0);
+  site.highlight = buildLaneHighlight(site.group);
   return { ...site, lane, x, status: "idle", statusColor: COLORS.idle };
+}
+
+/**
+ * 车道高亮层：给每条车道挂一层"点亮"用的自发光几何。
+ *
+ * 为什么不直接改车道模型自己的材质：`lane-kit.buildLaneSite` 里的静态构件走的是**跨车道共用的
+ * 材质缓存**（`staticMat`），改一条车道的材质会连带改掉所有车道 —— 而高亮只该亮一条。
+ * 所以这里独立建一层加色混合的自发光薄片：不吃灯光、不写深度、明确标 noShadow/noAO，
+ * 免得被 `applyShadowFlags` 收进阴影贴图、被 `contact-ao` 当成"立在地上的构件"清点
+ * （那两份计数是自检的基线，不能被这层装饰改动）。
+ */
+function buildLaneHighlight(group) {
+  const holder = new THREE.Group();
+  holder.name = "laneHighlight";
+  holder.userData.noShadow = true;
+  holder.userData.noAO = true;
+  holder.visible = false;
+
+  // 地面光带：逐像素算 alpha 做四边衰减，避免"一个方块压在路上"
+  const glowMaterial = new THREE.MeshBasicMaterial({
+    map: laneGlowTexture(),
+    color: 0x74c4ff,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const glow = new THREE.Mesh(new THREE.PlaneGeometry(LAYOUT.roadWidth + 2.6, LAYOUT.roadLength), glowMaterial);
+  glow.rotation.x = -Math.PI / 2;
+  glow.position.y = 0.07;   // 压过车位标线(0.035)与路肩(0.06)，又低于收费岛
+  holder.add(glow);
+
+  // 左右边界光带：把这条车道的边界勾出来
+  const edgeMaterial = new THREE.MeshBasicMaterial({
+    color: 0x9bd8ff,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const edgeGeometry = new THREE.BoxGeometry(0.16, 0.07, LAYOUT.roadLength);
+  const brackets = [];
+  for (const side of [-1, 1]) {
+    const edge = new THREE.Mesh(edgeGeometry, edgeMaterial);
+    edge.position.set(side * (LAYOUT.roadWidth / 2 + 0.42), 0.09, 0);
+    holder.add(edge);
+  }
+
+  // 四个角标（靶框）：车道两端各一对，一眼看出锁的是哪一段
+  const bracketMaterial = new THREE.MeshBasicMaterial({
+    color: 0xbfe9ff,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const bracketGeometry = new THREE.BoxGeometry(0.32, 0.09, 2.6);
+  for (const zSide of [-1, 1]) {
+    for (const xSide of [-1, 1]) {
+      const bracket = new THREE.Mesh(bracketGeometry, bracketMaterial);
+      bracket.position.set(xSide * (LAYOUT.roadWidth / 2 + 0.42), 0.1, zSide * (LAYOUT.roadLength / 2 - 1.6));
+      holder.add(bracket);
+      brackets.push(bracket);
+    }
+  }
+
+  holder.traverse((child) => {
+    if (!child.isMesh) return;
+    child.userData.noShadow = true;
+    child.userData.noAO = true;
+    child.renderOrder = 3;
+  });
+  group.add(holder);
+  return { group: holder, glow, brackets, materials: [glowMaterial, edgeMaterial, bracketMaterial] };
+}
+
+/** 光带贴图：横向（车宽方向）与纵向（车长方向）各衰减一次，再相乘。 */
+function laneGlowTexture() {
+  if (laneGlowTexture.texture) return laneGlowTexture.texture;
+  const width = 64;
+  const height = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  const image = ctx.createImageData(width, height);
+  const fade = (value) => Math.pow(Math.sin(Math.PI * Math.min(1, Math.max(0, value))), 1.7);
+  for (let y = 0; y < height; y += 1) {
+    const fy = fade((y + 0.5) / height);
+    for (let x = 0; x < width; x += 1) {
+      const alpha = Math.round(255 * fade((x + 0.5) / width) * fy);
+      const index = (y * width + x) * 4;
+      image.data[index] = 255;
+      image.data[index + 1] = 255;
+      image.data[index + 2] = 255;
+      image.data[index + 3] = alpha;
+    }
+  }
+  ctx.putImageData(image, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  laneGlowTexture.texture = texture;
+  return texture;
+}
+
+/**
+ * 每帧刷新高亮强度。选中瞬间给一次衰减脉冲（看得出"刚才点了它"），播放中持续呼吸，
+ * 静止时停在固定亮度 —— 静止不打 keepAlive，不为了这一层装饰让页面一直出帧。
+ */
+function applyLaneHighlight(now, playing) {
+  const since = (now - STATE.highlightAt) / 1000;
+  const pop = since < 0.9 ? 1 - since / 0.9 : 0;
+  const pulse = playing ? 0.5 + 0.5 * Math.sin(now / 320) : 0;
+  const level = Math.max(pop, pulse * 0.7);
+  STATE.highlightLevel = level;
+  const focusId = STATE.focus ? STATE.focus.laneId : null;
+  STATE.models.forEach((model, laneId) => {
+    const highlight = model.highlight;
+    if (!highlight) return;
+    const on = laneId === STATE.selectedLane;
+    highlight.group.visible = on && model.group.visible !== false;
+    if (!on) return;
+    const focused = laneId === focusId;
+    const base = focused ? 0.34 : 0.22;
+    const amp = focused ? 0.32 : 0.24;
+    highlight.materials[0].opacity = base + amp * level;
+    highlight.materials[1].opacity = base * 1.9 + amp * 1.5 * level;
+    highlight.materials[2].opacity = base * 1.6 + amp * 1.2 * level;
+  });
 }
 
 function laneSub(lane) {
@@ -540,17 +709,28 @@ function statusOf(entry, isActive) {
 // ---------------------------------------------------------------------------
 const LOOP = createRenderLoop({
   onFrame,
-  keepAlive: () => STATE.playing || STATE.flashCount > 0,
+  keepAlive: () => STATE.playing || STATE.flashCount > 0 || Boolean(STATE.camTween),
   minInterval: frameInterval(GPU.software),
 });
 
 function onFrame(dt, now) {
   if (STATE.playing && STATE.span > 0) {
     STATE.t += dt * 1000 * STATE.speed;
-    if (STATE.t >= STATE.span) STATE.t = 0;
+    if (STATE.focus) {
+      // 单车道通行回放：走到本趟结束就停住，不要绕回窗口开头（下钻看的是一趟过程）
+      if (STATE.t >= STATE.focus.to) {
+        STATE.t = STATE.focus.to;
+        STATE.playing = false;
+        dom.playBtn.textContent = "播放";
+      }
+    } else if (STATE.t >= STATE.span) {
+      STATE.t = 0;
+    }
   }
 
+  updateCamTween(dt);
   updateScene(dt, now);
+  applyLaneHighlight(now, STATE.playing);
   updateLiveBars();
   highlightNode();
   syncTimeUi();
@@ -1006,13 +1186,20 @@ function updateLiveBars() {
 }
 
 function syncTimeUi() {
-  const text = formatClock(STATE.t);
+  const clock = formatClock(STATE.t);
+  let suffix = "";
+  if (STATE.focus) {
+    const width = Math.max(1, STATE.focus.to - STATE.focus.from);
+    const percent = Math.round(Math.min(1, Math.max(0, (STATE.t - STATE.focus.from) / width)) * 100);
+    suffix = ` 本趟 ${percent}%`;
+  }
+  const text = `${clock}${suffix}`;
   if (text !== STATE.lastClock) {
     STATE.lastClock = text;
-    dom.clock.textContent = text;
+    dom.clock.textContent = clock;
     dom.timeLabel.textContent = text;
   }
-  const slider = Math.round((STATE.t / STATE.span) * 1000);
+  const slider = timeToSlider(STATE.t);
   if (slider !== STATE.lastSlider) {
     STATE.lastSlider = slider;
     dom.scrub.value = String(slider);
@@ -1130,29 +1317,441 @@ function buildLaneList() {
   dom.laneList.querySelectorAll(".lane-item").forEach((item) => {
     item.addEventListener("click", (event) => {
       if (event.target.tagName === "INPUT") return;
-      selectLane(item.dataset.lane);
+      const laneId = item.dataset.lane;
+      if (STATE.focus) {
+        // 已经在下钻：点别的车道 = 换到那条车道的通行回放（那条车道有拦截/超时就落到那一趟）
+        const incident = STATE.incidents.find((entry) => entry.lane.id === laneId);
+        enterFocus(laneId, incident ? incident.passage.i : null);
+        return;
+      }
+      selectLane(laneId);
     });
   });
   dom.laneList.querySelectorAll("input[data-visible]").forEach((input) => {
     input.addEventListener("change", () => {
       const model = STATE.models.get(input.dataset.visible);
-      if (model) model.group.visible = input.checked;
+      // 下钻时只留聚焦那条车道：勾选框照样记录用户意愿，但别的车道继续隐藏
+      if (model) model.group.visible = STATE.focus ? input.dataset.visible === STATE.focus.laneId : input.checked;
       dom.laneList.querySelector(`.lane-item[data-lane="${input.dataset.visible}"]`)?.classList.toggle("off", !input.checked);
       document.querySelector(`.swim-row[data-lane="${input.dataset.visible}"]`)?.classList.toggle("off", !input.checked);
-      if (!input.checked) STATE.models.get(input.dataset.visible).vehicle.visible = false;
+      if (!input.checked) model.vehicle.visible = false;
       LOOP.hold(400);
     });
   });
 }
 
-function selectLane(laneId) {
-  dom.laneList.querySelectorAll(".lane-item").forEach((item) => item.classList.toggle("sel", item.dataset.lane === laneId));
+/**
+ * 选中一条车道：左侧列表 + 泳道行 + 三维高亮 + 悬浮车辆清单的过滤范围都跟着走。
+ * @param {string} laneId
+ * @param {{follow?:boolean}} [options] follow=false 时不动相机（下钻自己会摆机位）
+ */
+function selectLane(laneId, { follow = true } = {}) {
   const lane = STATE.lanes.find((item) => item.id === laneId);
-  if (lane) {
-    const model = STATE.models.get(laneId);
-    STATE.controls.target.set(model.x, 0, 2);
-    LOOP.hold(700);
+  if (!lane) return;
+  STATE.selectedLane = laneId;
+  STATE.highlightAt = performance.now();
+  dom.laneList.querySelectorAll(".lane-item").forEach((item) => item.classList.toggle("sel", item.dataset.lane === laneId));
+  dom.swimRows.querySelectorAll(".swim-row").forEach((row) => row.classList.toggle("sel", row.dataset.lane === laneId));
+  const model = STATE.models.get(laneId);
+  if (model && follow) camTweenTo(new THREE.Vector3(model.x, 0, 2));
+  // 点车道 = 把悬浮清单收到这条车道上（再点一次"全部车道"就放回全局）
+  if (!STATE.focus) setLaneFilter(laneId, { render: false });
+  renderVehicleFloat();
+  LOOP.hold(700);
+}
+
+// ---------------------------------------------------------------------------
+// 拦截 / 超时车辆清单（左侧浮层）与单车道通行回放（下钻）
+// ---------------------------------------------------------------------------
+/**
+ * 清点窗口内的"问题车"：过程判定拦截的，以及过程本身 / 线圈 / 栏杆超时且与本趟时间重叠的。
+ * 全部来自 lanes.json 已有的事实，不新增任何判定阈值。
+ */
+function buildIncidents() {
+  const offset = STATE.data.window.offsetMs;
+  const incidents = [];
+  for (const lane of STATE.lanes) {
+    const coilTracks = [...lane.signals.coils.entries()];
+    for (const passage of lane.passages) {
+      const kinds = new Set();
+      const reasons = [];
+      const from = passage.o0 - offset;
+      const to = passage.o1 - offset;
+      if (passage.result === "拦截") {
+        kinds.add("block");
+        reasons.push(`过程判定拦截（依据 ${passage.basis} · 强度 ${passage.confidence} · ${passage.eventCount} 条日志）`);
+      }
+      if (lane.signals.passageTimeouts.has(passage.i)) {
+        kinds.add("timeout");
+        reasons.push(`过程跨度 ${(passage.durationMs / 1000).toFixed(1)}s 超过阈值 ${TIMEOUT.passageMs / 1000}s`);
+      }
+      for (const [coilId, track] of coilTracks) {
+        // 同一条线圈只报最早那次重叠，免得一辆车刷出七八行
+        const hit = track.timeouts.find((interval) => interval.t1 >= from && interval.t0 <= to);
+        if (hit) {
+          kinds.add("timeout");
+          reasons.push(`线圈${coilId} 压上后 ${(hit.ms / 1000).toFixed(1)}s 未释放（@ ${hit.at}，阈值 ${TIMEOUT.coilMs / 1000}s）`);
+        }
+      }
+      const barrierHit = lane.signals.barrier.timeouts.find((interval) => interval.t1 >= from && interval.t0 <= to);
+      if (barrierHit) {
+        kinds.add("timeout");
+        reasons.push(`栏杆抬杆后 ${(barrierHit.ms / 1000).toFixed(1)}s 未落杆（@ ${barrierHit.at}，阈值 ${TIMEOUT.barrierMs / 1000}s）`);
+      }
+      if (!kinds.size) continue;
+      incidents.push({ key: `${lane.id}#${passage.i}`, lane, passage, t0: from, kinds: [...kinds], reasons });
+    }
   }
+  incidents.sort((a, b) => a.t0 - b.t0);
+  STATE.incidents = incidents;
+  return incidents;
+}
+
+function visibleIncidents() {
+  return STATE.incidents.filter((incident) => {
+    if (STATE.filter === "block" && !incident.kinds.includes("block")) return false;
+    if (STATE.filter === "timeout" && !incident.kinds.includes("timeout")) return false;
+    if (STATE.laneFilter && incident.lane.id !== STATE.laneFilter) return false;
+    return true;
+  });
+}
+
+function setLaneFilter(laneId, { render = true } = {}) {
+  STATE.laneFilter = laneId || null;
+  if (render) renderVehicleFloat();
+}
+
+/** 车型族：只影响车型图的画法，判定用的 kind 仍然原样保留。 */
+function vehicleFamily(kind) {
+  if (kind === "car") return "car";
+  if (kind === "van") return "van";
+  if (kind === "bus" || kind === "coach") return "coach";
+  if (kind === "lightTruck") return "lightTruck";
+  if (kind === "mediumTruck" || (typeof kind === "string" && kind.startsWith("rigid"))) return "mediumTruck";
+  if (typeof kind === "string" && kind.startsWith("semi")) return "semi";
+  return "other";
+}
+
+/**
+ * 车型图：画侧视轮廓（车头朝右），轴位直接调 `axleLayout` —— 图里几个轮子、排在哪儿，
+ * 必须和三维场景里那辆车完全一致。车身只用示意灰蓝，不冒充真实车身颜色（日志里没有可靠的车身色）。
+ */
+function vehicleIconSvg(spec, label = "") {
+  const width = 78;
+  const height = 34;
+  const ground = 28.5;
+  const kind = (spec && spec.kind) || "car";
+  const dims = (spec && spec.dims) || {};
+  const axles = (spec && spec.axles) || 2;
+  const length = Math.max(3.4, Math.min(Number(dims.length) || 4.7, 20));
+  const tall = Math.max(1.2, Math.min(Number(dims.height) || 1.5, 4.4));
+  const span = 62;   // 车长统一占 62px：图内不按真实长度缩放，长短靠轮廓与轴数区分
+  const scale = span / length;
+  const x0 = (width - span) / 2;
+  const bodyHeight = Math.max(6.5, Math.min(19, tall * scale));
+  const roof = ground - bodyHeight;
+  const wheelR = Math.max(2.1, Math.min(4.4, (kind === "car" ? Math.min(0.34, tall * 0.22) : 0.42) * scale));
+  const r = (value) => Math.round(value * 10) / 10;
+  const px = (u) => x0 + u * span;
+  const py = (v) => ground - v * bodyHeight;
+  const boxU = (u0, u1, v0, v1, fill, radius = 1.2) => {
+    const x = px(u0);
+    const y = py(v1);
+    return `<rect x="${r(x)}" y="${r(y)}" width="${r(px(u1) - x)}" height="${r(py(v0) - y)}" rx="${radius}" fill="${fill}"/>`;
+  };
+  const BODY = "#33414f";
+  const BODY2 = "#3f4f5e";
+  const CAB = "#465866";
+  const GLASS = "#7fb6dd";
+  const WHEEL = "#0f141a";
+  const RIM = "#6b7b8d";
+  const parts = [];
+  const family = vehicleFamily(kind);
+  if (family === "car") {
+    parts.push(boxU(0, 1, 0.06, 0.52, BODY, 2.4));
+    parts.push(`<path d="M${r(px(0.24))} ${r(py(0.52))} L${r(px(0.34))} ${r(py(0.88))} L${r(px(0.68))} ${r(py(0.88))} L${r(px(0.78))} ${r(py(0.52))} Z" fill="${BODY2}"/>`);
+    parts.push(boxU(0.35, 0.45, 0.56, 0.82, GLASS, 0.8));
+    parts.push(boxU(0.49, 0.66, 0.56, 0.82, GLASS, 0.8));
+  } else if (family === "van") {
+    parts.push(boxU(0, 1, 0.06, 0.54, BODY, 2));
+    parts.push(`<path d="M${r(px(0.08))} ${r(py(0.54))} L${r(px(0.1))} ${r(py(0.94))} L${r(px(0.84))} ${r(py(0.94))} L${r(px(0.92))} ${r(py(0.62))} L${r(px(0.92))} ${r(py(0.54))} Z" fill="${BODY2}"/>`);
+    parts.push(boxU(0.68, 0.88, 0.62, 0.88, GLASS, 0.8));
+  } else if (family === "coach") {
+    parts.push(boxU(0, 1, 0.06, 0.95, BODY, 2.2));
+    parts.push(boxU(0.06, 0.94, 0.58, 0.84, GLASS, 0.8));
+  } else if (family === "lightTruck") {
+    parts.push(boxU(0.6, 1, 0.06, 0.84, CAB, 1.6));
+    parts.push(boxU(0.63, 0.9, 0.56, 0.76, GLASS, 0.8));
+    parts.push(boxU(0, 0.56, 0.06, 0.68, BODY2, 1.2));
+  } else if (family === "mediumTruck") {
+    parts.push(boxU(0.64, 1, 0.06, 0.88, CAB, 1.6));
+    parts.push(boxU(0.67, 0.92, 0.58, 0.8, GLASS, 0.8));
+    parts.push(boxU(0, 0.6, 0.06, 0.76, BODY2, 1.2));
+  } else if (family === "semi") {
+    parts.push(boxU(0.72, 1, 0.06, 0.92, CAB, 1.6));
+    parts.push(boxU(0.75, 0.94, 0.6, 0.84, GLASS, 0.8));
+    parts.push(boxU(0, 0.6, 0.16, 0.92, BODY2, 1.2));
+  } else {
+    parts.push(boxU(0, 1, 0.06, 0.72, BODY2, 1.2));
+  }
+  const axleZ = axleLayout(kind, { length, width: Number(dims.width) || 1.85, height: tall }, axles, dims.wheelbase);
+  for (const z of axleZ) {
+    const x = px(0.5 + z / length);
+    parts.push(`<circle cx="${r(x)}" cy="${r(ground - wheelR)}" r="${r(wheelR)}" fill="${WHEEL}"/>`);
+    parts.push(`<circle cx="${r(x)}" cy="${r(ground - wheelR)}" r="${r(wheelR * 0.36)}" fill="${RIM}"/>`);
+  }
+  // 车牌颜色角标（在图形左上角，不压在车上）：日志给了牌色就照牌色，没给就灰底
+  const style = spec ? PLATE_STYLE[spec.plateColorCode] : null;
+  parts.push(
+    `<rect x="1" y="1" width="9.5" height="4.8" rx="1" fill="${style ? style.bg : "#2b3138"}" stroke="#0e1116" stroke-width="0.5"/>`,
+    `<line x1="1" y1="29.6" x2="77" y2="29.6" stroke="#25303b" stroke-width="1"/>`,
+  );
+  return `<svg class="vf-icon" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(label)}">
+    <title>${escapeHtml(label)}</title>${parts.join("")}</svg>`;
+}
+
+function incidentRowHtml(incident) {
+  const { lane, passage } = incident;
+  const spec = passage.vehicle || null;
+  const plate = passage.plates.length ? passage.plates[0] : "";
+  const focused = STATE.focus && STATE.focus.laneId === lane.id && STATE.focus.passageI === passage.i;
+  const selected = STATE.selected && STATE.selected.lane.id === lane.id && STATE.selected.passage.i === passage.i;
+  const label = `${plate || "无车牌"} · ${spec ? spec.classLabel || "未知车型" : "车型未上报"} · ${spec ? spec.axles || "?" : "?"} 轴 · ${lane.id} · ${passage.start}`;
+  const plateLabel = spec && spec.plateColorLabel ? `车牌颜色 ${spec.plateColorLabel}` : "车牌颜色未上报";
+  const dims = spec && spec.dims && Number(spec.dims.length)
+    ? ` · ${Number(spec.dims.length).toFixed(2)}×${Number(spec.dims.width).toFixed(2)}×${Number(spec.dims.height).toFixed(2)}m`
+    : "";
+  const badges = [
+    incident.kinds.includes("block") ? `<span class="vf-badge block">拦截</span>` : "",
+    incident.kinds.includes("timeout") ? `<span class="vf-badge timeout">超时</span>` : "",
+  ].join("");
+  return `<div class="vf-item${focused ? " focused" : ""}${selected ? " sel" : ""}" data-lane="${lane.id}" data-i="${passage.i}"
+    role="button" tabindex="0"
+    title="${escapeHtml(`${label} · ${plateLabel}${dims} —— 点一下下钻到该车道的通行回放`)}">
+    ${vehicleIconSvg(spec, `${spec ? spec.classLabel || "未知车型" : "车型未上报"}（${spec ? spec.axles || "?" : "?"} 轴）示意轮廓，不代表真实车身颜色`)}
+    <div class="vf-main">
+      <div class="vf-line1">
+        <span class="vf-plate${plate ? "" : " dim"}">${escapeHtml(plate || "无车牌")}</span>${badges}
+      </div>
+      <div class="vf-meta">${lane.id} · ${passage.start} · ${escapeHtml(spec ? spec.classLabel || "未知车型" : "车型未上报")} · ${spec ? spec.axles || "?" : "?"} 轴 · ${Math.round(passage.durationMs)} ms</div>
+      <div class="vf-why">${escapeHtml(incident.reasons[0] || "")}</div>
+    </div>
+  </div>`;
+}
+
+function renderVehicleFloat() {
+  if (!dom.vehicleFloatBody) return;
+  const items = visibleIncidents();
+  const total = STATE.incidents.length;
+  const blocked = STATE.incidents.filter((item) => item.kinds.includes("block")).length;
+  const timed = STATE.incidents.filter((item) => item.kinds.includes("timeout")).length;
+  dom.vehicleFloatCount.textContent = total ? `拦截 ${blocked} · 超时 ${timed}` : "0 辆";
+  dom.vehicleFloatScope.textContent = STATE.laneFilter ? `仅 ${STATE.laneFilter}` : "全部车道";
+  dom.vehicleFloatScope.title = STATE.laneFilter ? "点一下看全部车道" : "当前列出全部车道";
+  dom.vehicleFloatHint.textContent = STATE.focus ? "正在回放本趟 · 点其它车辆可切到那趟" : "点一条车辆 → 下钻到该车道的通行回放";
+  if (!items.length) {
+    dom.vehicleFloatBody.innerHTML = `<div class="vf-empty">${
+      total ? `当前筛选下没有车辆（窗口内共 ${total} 辆）` : "窗口内没有拦截 / 超时车辆"
+    }</div>`;
+    return;
+  }
+  dom.vehicleFloatBody.innerHTML = items.map(incidentRowHtml).join("");
+  dom.vehicleFloatBody.querySelectorAll(".vf-item").forEach((row) => {
+    const focus = () => enterFocus(row.dataset.lane, Number(row.dataset.i));
+    row.addEventListener("click", focus);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        focus();
+      }
+    });
+  });
+  const focusedRow = dom.vehicleFloatBody.querySelector(".vf-item.focused");
+  if (focusedRow) focusedRow.setAttribute("aria-current", "true");
+}
+
+function bindVehicleFloat() {
+  if (dom.vehicleFloatToggle) {
+    dom.vehicleFloatToggle.addEventListener("click", () => {
+      const collapsed = dom.vehicleFloat.classList.toggle("collapsed");
+      dom.vehicleFloatToggle.textContent = collapsed ? "展开" : "收起";
+      LOOP.hold(200);
+    });
+  }
+  if (dom.vehicleFloatScope) {
+    dom.vehicleFloatScope.addEventListener("click", () => {
+      setLaneFilter(null);
+      LOOP.hold(200);
+    });
+  }
+  dom.vfChips.forEach((chip) => {
+    chip.addEventListener("click", () => {
+      STATE.filter = chip.dataset.filter || "all";
+      dom.vfChips.forEach((item) => item.classList.toggle("on", item === chip));
+      renderVehicleFloat();
+      LOOP.hold(200);
+    });
+  });
+}
+
+/** 相机补间：只改位置/目标点，交给 OrbitControls 自己去收敛（阻尼照旧）。 */
+function camTweenTo(target, position = null) {
+  STATE.camTween = { target: target.clone(), position: position ? position.clone() : STATE.camera.position.clone() };
+  LOOP.hold(500);
+}
+
+function updateCamTween(dt) {
+  const tween = STATE.camTween;
+  if (!tween) return;
+  const k = Math.min(1, 1 - Math.exp(-dt * 7));
+  STATE.camera.position.lerp(tween.position, k);
+  STATE.controls.target.lerp(tween.target, k);
+  if (STATE.camera.position.distanceTo(tween.position) < 0.06 && STATE.controls.target.distanceTo(tween.target) < 0.06) {
+    STATE.camera.position.copy(tween.position);
+    STATE.controls.target.copy(tween.target);
+    STATE.camTween = null;
+  }
+}
+
+/** 本页时间轴与聚焦区间之间的换算：聚焦时进度条只覆盖本趟过程。 */
+function timeToSlider(t) {
+  const focus = STATE.focus;
+  if (!focus) return Math.round((t / STATE.span) * 1000);
+  const width = Math.max(1, focus.to - focus.from);
+  return Math.round(Math.min(1, Math.max(0, (t - focus.from) / width)) * 1000);
+}
+
+function sliderToTime(value) {
+  const focus = STATE.focus;
+  if (!focus) return (value / 1000) * STATE.span;
+  return focus.from + (value / 1000) * Math.max(1, focus.to - focus.from);
+}
+
+/** 取某条车道的某一趟过程；passageI 给不出（null/找不到）时退回该车道第一趟。 */
+function focusPassage(laneId, passageI) {
+  const lane = STATE.lanes.find((item) => item.id === laneId);
+  if (!lane || !lane.passages.length) return null;
+  return lane.passages.find((item) => item.i === passageI) || lane.passages[0];
+}
+
+/** 这趟车的车牌在 index.json 里有单车日志、且时刻落在该日志窗口内吗（否则跳过去什么也看不到）。 */
+function soloLogFor(passage) {
+  if (!passage.plates.length || !STATE.soloLogs.length) return null;
+  const plate = passage.plates[0];
+  for (const log of STATE.soloLogs) {
+    if (!log || log.vehicle !== plate) continue;
+    const from = String(log.start || "").slice(11, 23);
+    const to = String(log.end || "").slice(11, 23);
+    if (from && to && (passage.start < from || passage.start > to)) continue;
+    return log;
+  }
+  return null;
+}
+
+function focusCameraPosition(x) {
+  return new THREE.Vector3(x + 12.5, 7.6, 21);
+}
+
+function renderFocusBar(focus) {
+  if (!dom.focusBar) return;
+  const lane = focus ? STATE.lanes.find((item) => item.id === focus.laneId) : null;
+  const passage = lane ? lane.passages.find((item) => item.i === focus.passageI) : null;
+  if (!lane || !passage) {
+    dom.focusBar.hidden = true;
+    return;
+  }
+  dom.focusBar.hidden = false;
+  dom.focusLane.textContent = lane.id;
+  dom.focusRange.textContent = `${passage.start} → ${passage.end} · ${(passage.durationMs / 1000).toFixed(1)}s · ${passage.eventCount} 条日志`;
+  const incident = STATE.incidents.find((item) => item.lane.id === lane.id && item.passage.i === passage.i);
+  const tone = incident
+    ? (incident.kinds.includes("timeout") ? "timeout" : "block")
+    : (passage.result === "拦截" ? "block" : passage.result === "放行" ? "pass" : passage.result === "混合" ? "mixed" : "");
+  const label = incident ? (incident.kinds.includes("timeout") ? "超时" : "拦截") : passage.result;
+  dom.focusResult.className = `focus-result ${tone}`;
+  dom.focusResult.textContent = `${label} · ${passage.plates.length ? passage.plates[0] : "无车牌"}`;
+  const solo = soloLogFor(passage);
+  if (solo) {
+    dom.focusDeepLink.hidden = false;
+    dom.focusDeepLink.href = `./index.html?file=${encodeURIComponent(solo.file)}&at=${encodeURIComponent(passage.start)}`;
+    dom.focusDeepLink.title = `${solo.vehicle} 的单车日志（${solo.eventCount} 条）里跳到这时刻`;
+  } else {
+    dom.focusDeepLink.hidden = true;
+    dom.focusDeepLink.removeAttribute("href");
+    // 提示也别写死车牌：这份名单是从 data/index.json 读出来的
+    const names = [...new Set(STATE.soloLogs.map((log) => log && log.vehicle).filter(Boolean))];
+    dom.focusDeepLink.title = names.length
+      ? `窗口内的单车日志只有 ${names.join(" / ")}，本趟不在其中（时刻对不上）`
+      : "窗口内没有单车日志（data/index.json 为空）";
+  }
+}
+
+/** 下钻：只留这一条车道、相机取到该车道、时间游标停在本趟起点。 */
+function enterFocus(laneId, passageI) {
+  const lane = STATE.lanes.find((item) => item.id === laneId);
+  const passage = focusPassage(laneId, passageI);
+  if (!lane || !passage) return;
+  const offset = STATE.data.window.offsetMs;
+  STATE.focus = {
+    laneId,
+    passageI: passage.i,
+    from: Math.max(0, passage.o0 - offset),
+    to: Math.min(STATE.span, passage.o1 - offset),
+  };
+  document.body.classList.add("single-lane");
+  STATE.lanes.forEach((item) => {
+    const model = STATE.models.get(item.id);
+    if (model) model.group.visible = item.id === laneId;
+  });
+  dom.swimRows.querySelectorAll(".swim-row").forEach((row) => row.classList.toggle("focus", row.dataset.lane === laneId));
+  document.querySelectorAll(".hud .pill").forEach((pill) => pill.classList.toggle("focus", pill.dataset.hud === laneId));
+  setLaneFilter(laneId, { render: false });
+  selectPassage(lane, passage);                       // 选中条带 + 游标跳到本趟起点 + 过程详情
+  const model = STATE.models.get(laneId);
+  camTweenTo(new THREE.Vector3(model.x, 1.2, -0.8), focusCameraPosition(model.x));
+  renderFocusBar(STATE.focus);
+  renderDetail();
+  renderVehicleFloat();
+  LOOP.hold(900);
+}
+
+/** 退出下钻：恢复所有车道（按用户自己的显隐复选框）与全局时间轴。 */
+function exitFocus() {
+  if (!STATE.focus) return;
+  STATE.focus = null;
+  document.body.classList.remove("single-lane");
+  STATE.lanes.forEach((item) => {
+    const model = STATE.models.get(item.id);
+    if (model) model.group.visible = true;
+  });
+  dom.laneList.querySelectorAll("input[data-visible]").forEach((input) => {
+    const model = STATE.models.get(input.dataset.visible);
+    if (model) model.group.visible = input.checked;
+    if (model && !input.checked) model.vehicle.visible = false;
+  });
+  dom.swimRows.querySelectorAll(".swim-row").forEach((row) => row.classList.remove("focus"));
+  document.querySelectorAll(".hud .pill").forEach((pill) => pill.classList.remove("focus"));
+  if (dom.focusBar) dom.focusBar.hidden = true;
+  setLaneFilter(STATE.selectedLane, { render: false });
+  renderVehicleFloat();
+  renderDetail();
+  const model = STATE.selectedLane ? STATE.models.get(STATE.selectedLane) : null;
+  camTweenTo(new THREE.Vector3(0, 0, 2), new THREE.Vector3(model ? model.x * 0.5 : 0, 58, 76));
+  LOOP.hold(700);
+}
+
+function replayFocus() {
+  if (!STATE.focus) return;
+  STATE.t = STATE.focus.from;
+  STATE.playing = true;
+  dom.playBtn.textContent = "暂停";
+  STATE.lastSlider = -1;
+  LOOP.hold(4000);
+}
+
+function bindFocusBar() {
+  if (dom.focusBack) dom.focusBack.addEventListener("click", () => exitFocus());
+  if (dom.focusReplay) dom.focusReplay.addEventListener("click", () => replayFocus());
 }
 
 // ---------------------------------------------------------------------------
@@ -1311,6 +1910,8 @@ function renderDetail() {
   const selected = STATE.selected;
   if (!selected) return;
   const { lane, passage } = selected;
+  const focused = Boolean(STATE.focus && STATE.focus.laneId === lane.id && STATE.focus.passageI === passage.i);
+  const solo = soloLogFor(passage);
   const passageTimeout = lane.signals.passageTimeouts.has(passage.i);
   const chips = [
     `<span class="chip ${passage.result === "放行" ? "pass" : passage.result === "拦截" ? "block" : passage.result === "混合" ? "mixed" : ""}">${passage.result}</span>`,
@@ -1373,12 +1974,28 @@ function renderDetail() {
   dom.detail.innerHTML = `
     <div class="detail-head">${lane.id} · ${passage.start} → ${passage.end}</div>
     <div class="detail-chips">${chips}</div>
+    <div class="detail-actions">
+      <button class="detail-btn" id="detailFocus" type="button">${focused ? "← 返回多车道" : "下钻到单车道通行回放"}</button>
+      ${
+        solo
+          ? `<a class="detail-btn linkish" id="detailSolo" href="./index.html?file=${encodeURIComponent(solo.file)}&at=${encodeURIComponent(passage.start)}" title="${solo.vehicle} 的单车日志（${solo.eventCount} 条）里跳到这时刻">单车日志回放 →</a>`
+          : ""
+      }
+    </div>
     <div class="steps">设备序列：${passage.devices.join(" → ") || "-"}${passage.nodes.length > maxNodes ? `（展示前 ${maxNodes} / ${passage.nodes.length} 个节点）` : ""}</div>
     <h3 class="mini">该时间点的设备状态</h3>
     <ul class="state-lines">${stateLines.join("")}</ul>
     <div class="steps dim">最后一次活动：${deviceTail || "-"}</div>
     <h3 class="mini">过程节点</h3>
     <ol class="nodes">${list}</ol>`;
+
+  const focusButton = dom.detail.querySelector("#detailFocus");
+  if (focusButton) {
+    focusButton.addEventListener("click", () => {
+      if (focused) exitFocus();
+      else enterFocus(lane.id, passage.i);
+    });
+  }
 }
 
 function escapeHtml(text) {
@@ -1405,6 +2022,8 @@ function highlightNode() {
 // ---------------------------------------------------------------------------
 function bindControls() {
   dom.playBtn.addEventListener("click", () => {
+    // 聚焦回放里播到头之后再按播放 = 从头重播本趟
+    if (!STATE.playing && STATE.focus && STATE.t >= STATE.focus.to - 1) STATE.t = STATE.focus.from;
     STATE.playing = !STATE.playing;
     dom.playBtn.textContent = STATE.playing ? "暂停" : "播放";
     LOOP.hold(STATE.playing ? 4000 : 600);
@@ -1414,12 +2033,20 @@ function bindControls() {
     LOOP.hold(300);
   });
   dom.scrub.addEventListener("input", () => {
-    STATE.t = (Number(dom.scrub.value) / 1000) * STATE.span;
+    STATE.t = sliderToTime(Number(dom.scrub.value));
     LOOP.hold(400);
   });
   dom.resetBtn.addEventListener("click", () => {
+    exitFocus();
     STATE.t = 0;
     STATE.selected = null;
+    STATE.selectedLane = null;
+    STATE.playing = false;
+    dom.playBtn.textContent = "播放";
+    dom.laneList.querySelectorAll(".lane-item").forEach((item) => item.classList.remove("sel"));
+    dom.swimRows.querySelectorAll(".swim-row").forEach((row) => row.classList.remove("sel"));
+    setLaneFilter(null);
+    camTweenTo(new THREE.Vector3(0, 0, 2), new THREE.Vector3(0, 58, 76));
     dom.detail.innerHTML = `<p class="dim">在下方泳道里点一条过程条带，或按播放让时间游标走过车道。</p>`;
     LOOP.hold(500);
   });
@@ -1467,7 +2094,24 @@ function resize() {
   STATE.renderer.setSize(width, height, false);
   STATE.bloom?.setSize(width, height);
   STATE.swimGeom = swimGeometry();
+  placeVehicleFloat();
   LOOP.hold(300);
+}
+
+/**
+ * 悬浮清单要挂在状态胶囊下面：窄窗口时胶囊会折成两行，写死 top 就会被压住。
+ * 量的是胶囊的实际盒高（不猜行数），窗口一变就重排。
+ */
+function placeVehicleFloat() {
+  if (!dom.vehicleFloat) return;
+  const hud = document.querySelector(".hud");
+  const stage = dom.canvas.parentElement;
+  if (!hud || !stage) return;
+  const stageTop = stage.getBoundingClientRect().top;
+  const top = Math.max(52, hud.getBoundingClientRect().bottom - stageTop + 10);
+  dom.vehicleFloat.style.top = `${Math.round(top)}px`;
+  // 底下给「超时胶囊」（bottom 12px）留出位置，清单再长也不压它
+  dom.vehicleFloat.style.maxHeight = `${Math.max(150, Math.round(stage.clientHeight - top - 46))}px`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1684,6 +2328,108 @@ window.__LANES__ = {
       passageTimeouts: [...lane.signals.passageTimeouts],
       ticks: lane.signals.ticks.length,
     };
+  },
+  // ---- 交互：车道高亮 / 拦截超时清单 / 单车道下钻（自检用） ----
+  selectLane(laneId) {
+    selectLane(laneId);
+    return STATE.selectedLane;
+  },
+  get selectedLane() {
+    return STATE.selectedLane;
+  },
+  /** 三维高亮层：哪条亮着、亮度多少 —— 亮点在画布上，只能这样核对 */
+  highlightState() {
+    const lit = [];
+    STATE.models.forEach((model, laneId) => {
+      if (model.highlight && model.highlight.group.visible) {
+        lit.push({ laneId, opacity: Math.round(model.highlight.materials[0].opacity * 1000) / 1000 });
+      }
+    });
+    return { lit, level: Math.round((STATE.highlightLevel || 0) * 1000) / 1000 };
+  },
+  incidents() {
+    return STATE.incidents.map((item) => ({
+      laneId: item.lane.id,
+      passage: item.passage.i,
+      start: item.passage.start,
+      plate: item.passage.plates[0] || null,
+      kind: item.passage.vehicle ? item.passage.vehicle.kind : null,
+      classLabel: item.passage.vehicle ? item.passage.vehicle.classLabel : null,
+      axles: item.passage.vehicle ? item.passage.vehicle.axles : null,
+      kinds: item.kinds,
+      reason: item.reasons[0] || "",
+    }));
+  },
+  vehicleFloatRows() {
+    return [...document.querySelectorAll("#vehicleFloatBody .vf-item")].map((row) => ({
+      laneId: row.dataset.lane,
+      passage: Number(row.dataset.i),
+      plate: (row.querySelector(".vf-plate") || {}).textContent || "",
+      badges: [...row.querySelectorAll(".vf-badge")].map((badge) => badge.textContent),
+      iconShapes: row.querySelectorAll("svg.vf-icon *").length,
+      iconWheels: row.querySelectorAll("svg.vf-icon circle").length / 2,
+      focused: row.classList.contains("focused"),
+    }));
+  },
+  setFilter(filter) {
+    STATE.filter = filter;
+    dom.vfChips.forEach((chip) => chip.classList.toggle("on", chip.dataset.filter === filter));
+    renderVehicleFloat();
+    return visibleIncidents().length;
+  },
+  setFlash(on) {
+    STATE.flashEnabled = Boolean(on);
+    if (dom.flashToggle) dom.flashToggle.checked = STATE.flashEnabled;
+    LOOP.hold(400);
+    return STATE.flashEnabled;
+  },
+  clearLaneFilter() {
+    setLaneFilter(null);
+    return visibleIncidents().length;
+  },
+  enterFocus(laneId, passageI) {
+    enterFocus(laneId, passageI);
+    return this.focusState();
+  },
+  exitFocus() {
+    exitFocus();
+    return this.focusState();
+  },
+  focusState() {
+    const focus = STATE.focus;
+    const hidden = [];
+    STATE.models.forEach((model, laneId) => {
+      if (model.group.visible === false) hidden.push(laneId);
+    });
+    const solo = focus ? soloLogFor(focusPassage(focus.laneId, focus.passageI)) : null;
+    return {
+      active: Boolean(focus),
+      laneId: focus ? focus.laneId : null,
+      passage: focus ? focus.passageI : null,
+      from: focus ? Math.round(focus.from) : null,
+      to: focus ? Math.round(focus.to) : null,
+      t: Math.round(STATE.t),
+      hiddenLanes: hidden,
+      visibleLanes: STATE.lanes.length - hidden.length,
+      bodyClass: document.body.classList.contains("single-lane"),
+      focusBarHidden: dom.focusBar ? dom.focusBar.hidden : null,
+      focusRows: document.querySelectorAll(".swim-row.focus").length,
+      hiddenRows: [...document.querySelectorAll(".swim-row")].filter((row) => row.offsetParent === null).length,
+      playing: STATE.playing,
+      slider: Number(dom.scrub.value),
+      deepLink: dom.focusDeepLink && !dom.focusDeepLink.hidden ? dom.focusDeepLink.getAttribute("href") : null,
+      soloPlate: solo ? solo.vehicle : null,
+    };
+  },
+  /** 点击类交互也走同一套 handler：自检里 dispatch 真事件，而不是直接调内部函数 */
+  click(selector) {
+    const node = document.querySelector(selector);
+    if (!node) return null;
+    node.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    return true;
+  },
+  frame(ms = 260) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   },
 };
 

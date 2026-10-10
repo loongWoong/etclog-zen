@@ -256,6 +256,20 @@
       "createdAt": 1791592971340,
       "updatedAt": 1791592971340,
       "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv1p5nhs-4ih4mm",
+      "text": "etclog 多车道页（replay/lanes.js）第 31 轮加入三层交互：①点左侧车道 → 中间绘图区高亮该车道。高亮必须是独立加色混合自发光层（buildLaneHighlight：地面光带 ImageData sin(πv)^1.7 四边衰减 + 左右边界光带 + 两端角标），因为 lane-kit 静态构件共用材质缓存 staticMat，改一条会连带改全部 8 条；这层必须标 userData.noShadow/noAO，否则被 applyShadowFlags 收进阴影贴图、被 contact-ao 计成构件，而 237/722 这类计数是自检基线；静止时不进 keepAlive（只在选中后脉冲 0.9s 衰减）。②左侧悬浮清单列「拦截/超时」车辆（拦截=passage.result；超时=durationMs>90s 或线圈>20s/栏杆>30s 未释放且与本趟重叠），本窗口 103 趟里 23 辆（拦截 9/超时 12/both 2，筛选片 11/14/23）；每条带侧视车型图，车轮用 vehicle-models.js 的 axleLayout 保证与三维车一致，车身只画示意灰蓝（日志无可靠车身颜色）。③点清单车辆 → 下钻单车道通行回放（只渲染该车道、相机补间、游标停本趟起点、进度条收窄到本趟、播到终点停住不绕回），返回按用户显隐勾选恢复 8 条车道；有单车日志时给 index.html?file=…&at=本趟时刻 深链（app.js seekToClock 只认该日志里 ±60s 内的时刻）。自检实测：高亮层藏起来画面变化 0.71%（只变亮）、点车道后整帧 44.5%、下钻 76.9%、返回 77.4%、重置后与交互前逐像素差 0.02%（平均 0.007/255）= 交互可逆。",
+      "tags": [
+        "etclog",
+        "replay",
+        "lanes",
+        "交互",
+        "自检"
+      ],
+      "createdAt": 1791594582832,
+      "updatedAt": 1791594582832,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
     }
   ]
 }

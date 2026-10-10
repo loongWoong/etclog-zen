@@ -459,7 +459,181 @@ select {
 .time { font: 600 13px/1 "Consolas", monospace; color: #b9cde0; min-width: 76px; text-align: right; }
 .dim { color: var(--ink-dim); }
 
+/* ---------- 过程详情里的下钻按钮 ---------- */
+.detail-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 8px; }
+.detail-btn {
+  font: 11px/1 "Microsoft YaHei", sans-serif;
+  background: #1b222b;
+  border: 1px solid #3f7fb8;
+  color: #cfe3f7;
+  border-radius: 4px;
+  padding: 5px 9px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.detail-btn:hover { background: #26313d; }
+.detail-btn.linkish { border-color: #1d5f4e; color: #8ee0c0; }
+
+/* ---------- 左侧悬浮：拦截 / 超时车辆清单（带车型图，点一条下钻） ---------- */
+.vehicle-float {
+  position: absolute;
+  top: 52px;
+  left: 14px;
+  width: 318px;
+  max-height: calc(100% - 112px);
+  display: flex;
+  flex-direction: column;
+  background: rgba(17, 22, 29, 0.94);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  z-index: 6;
+}
+.vehicle-float.collapsed .vf-filters,
+.vehicle-float.collapsed .vf-body,
+.vehicle-float.collapsed .vf-hint { display: none; }
+.vf-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.vf-title { font-size: 12px; font-weight: 600; color: #dbe6f2; }
+.vf-count { font-size: 11px; color: var(--ink-dim); }
+.vf-toggle {
+  margin-left: auto;
+  font: 11px/1 "Microsoft YaHei", sans-serif;
+  color: var(--ink-dim);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.vf-toggle:hover { background: #232d39; }
+.vf-filters {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.vf-chip {
+  font: 11px/1 "Microsoft YaHei", sans-serif;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: #1b222b;
+  border: 1px solid var(--line);
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.vf-chip:hover { background: #232d39; }
+.vf-chip.on { color: #eaf2fb; border-color: #3f7fb8; background: #1d3247; }
+.vf-scope { margin-left: auto; font-size: 10px; color: #7b8b9c; cursor: pointer; }
+.vf-scope:hover { color: #9fd0ff; text-decoration: underline; }
+.vf-body { overflow-y: auto; padding: 6px 8px 6px; }
+.vf-item {
+  display: grid;
+  grid-template-columns: 78px 1fr;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.vf-item + .vf-item { margin-top: 2px; }
+.vf-item:hover { background: rgba(255, 255, 255, 0.04); border-color: #2c3b4a; }
+/* 键盘走一遍时也要看得出焦点在哪一行（enterFocus 同样能按 Enter/空格触发） */
+.vf-item:focus-visible { outline: 2px solid #4f9ede; outline-offset: -1px; }
+.vf-item.sel { background: rgba(63, 127, 184, 0.12); border-color: #3f7fb8; }
+.vf-item.focused { border-color: #d88727; background: rgba(216, 135, 39, 0.1); }
+.vf-icon { width: 78px; height: 34px; display: block; }
+.vf-main { min-width: 0; }
+.vf-line1 { display: flex; align-items: center; gap: 5px; }
+.vf-plate { font: 600 12px/1.3 "Consolas", monospace; letter-spacing: 0.2px; }
+.vf-plate.dim { font-weight: 400; font-size: 11px; }
+.vf-badge { font-size: 10px; padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
+.vf-badge.block { color: #ffb3ad; border: 1px solid #6d2f2b; background: rgba(209, 72, 63, 0.16); }
+.vf-badge.timeout { color: #ffd08a; border: 1px solid #6b5220; background: rgba(216, 135, 39, 0.16); }
+.vf-badge.pass { color: #8ee0c0; border: 1px solid #1d5f4e; }
+.vf-meta { font-size: 10px; color: var(--ink-dim); margin-top: 2px; }
+.vf-why { font-size: 10px; color: #c98f86; margin-top: 1px; }
+.vf-empty { padding: 10px 8px; font-size: 11px; color: var(--ink-dim); line-height: 1.6; }
+.vf-hint {
+  padding: 5px 10px 7px;
+  font-size: 10px;
+  color: #6b7b8c;
+  border-top: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+
+/* ---------- 单车道通行回放：聚焦条 ---------- */
+.focus-bar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 40px);
+  padding: 5px 8px 5px 10px;
+  background: rgba(17, 22, 29, 0.95);
+  border: 1px solid #3f7fb8;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 7;
+}
+.focus-bar[hidden] { display: none; }
+.focus-tag { font-size: 10px; color: #9fd0ff; border: 1px solid #2c4a66; border-radius: 3px; padding: 1px 5px; white-space: nowrap; }
+.focus-lane { font: 600 13px/1 "Consolas", monospace; letter-spacing: 0.4px; }
+.focus-range { font-size: 11px; color: var(--ink-dim); white-space: nowrap; }
+.focus-result { font-size: 11px; padding: 1px 6px; border-radius: 3px; border: 1px solid var(--line); white-space: nowrap; }
+.focus-result.block { color: #ffb3ad; border-color: #6d2f2b; }
+.focus-result.timeout { color: #ffd08a; border-color: #6b5220; }
+.focus-result.pass { color: #8ee0c0; border-color: #1d5f4e; }
+.focus-result.mixed { color: #f0c489; border-color: #6b5220; }
+.focus-gap { width: 2px; }
+.focus-btn {
+  font: 11px/1 "Microsoft YaHei", sans-serif;
+  background: #1b222b;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  border-radius: 4px;
+  padding: 5px 8px;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.focus-btn:hover { background: #26313d; }
+.focus-btn.back { border-color: #3f7fb8; color: #cfe3f7; }
+.focus-btn.linkish { border-color: #1d5f4e; color: #8ee0c0; }
+.focus-btn.linkish[hidden] { display: none; }
+
+/* 聚焦模式下：只留一条泳道、只留一个状态胶囊，其余车道视觉退后 */
+body.single-lane .swim-row { display: none; }
+body.single-lane .swim-row.focus { display: grid; }
+body.single-lane .hud .pill { display: none; }
+body.single-lane .hud .pill.focus { display: inline-flex; }
+body.single-lane .lane-list .lane-item:not(.sel) { opacity: 0.5; }
+body.single-lane .stage { box-shadow: inset 0 0 0 1px #2c4a66; }
+
+/* 选中 / 聚焦车道在泳道里的强调 */
+.swim-row.sel .swim-label { color: #9fd0ff; }
+.swim-row.sel .swim-label small { color: #6f93b5; }
+.swim-row.focus { background: rgba(63, 127, 184, 0.07); }
+.swim-track .bar.sel { outline: 1px solid #d88727; outline-offset: 1px; }
+
 @media (max-width: 1100px) {
+  .vehicle-float { width: 268px; }
+  .vf-item { grid-template-columns: 62px 1fr; }
+  .vf-icon { width: 62px; height: 28px; }
+  .focus-bar { flex-wrap: wrap; }
   .side { width: 300px; flex-basis: 300px; }
   .swim-row { grid-template-columns: 116px 1fr; }
   .swim-scale { margin-left: 116px; }

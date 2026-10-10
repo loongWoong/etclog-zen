@@ -50,6 +50,36 @@
       <div class="hud" id="hud"></div>
       <div class="clock" id="clock"></div>
       <div class="timeout-pill" id="timeoutPill">当前游标处无超时设备</div>
+
+      <!-- 单车道通行回放：聚焦条（下钻后才出现） -->
+      <div class="focus-bar" id="focusBar" hidden>
+        <span class="focus-tag">单车道通行回放</span>
+        <span class="focus-lane" id="focusLane">-</span>
+        <span class="focus-range" id="focusRange"></span>
+        <span class="focus-result" id="focusResult"></span>
+        <span class="focus-gap"></span>
+        <button class="focus-btn" id="focusReplay" type="button">↻ 重播本趟</button>
+        <a class="focus-btn linkish" id="focusDeepLink" hidden>单车日志回放 →</a>
+        <button class="focus-btn back" id="focusBack" type="button">← 返回多车道</button>
+      </div>
+
+      <!-- 左侧浮层：拦截 / 超时的车辆清单（带车型图）——点车下钻到单车道回放 -->
+      <aside class="vehicle-float" id="vehicleFloat">
+        <div class="vf-head">
+          <span class="vf-title">拦截 / 超时车辆</span>
+          <span class="vf-count" id="vehicleFloatCount"></span>
+          <button class="vf-toggle" id="vehicleFloatToggle" type="button" title="收起 / 展开">收起</button>
+        </div>
+        <div class="vf-filters">
+          <button class="vf-chip on" id="vfAll" type="button" data-filter="all">全部</button>
+          <button class="vf-chip" id="vfBlock" type="button" data-filter="block">拦截</button>
+          <button class="vf-chip" id="vfTimeout" type="button" data-filter="timeout">超时</button>
+          <span class="vf-scope" id="vehicleFloatScope">全部车道</span>
+        </div>
+        <div class="vf-body" id="vehicleFloatBody"></div>
+        <div class="vf-hint" id="vehicleFloatHint">点一条车辆 → 下钻到该车道的通行回放</div>
+      </aside>
+
       <aside class="alert-panel" id="alertPanel" hidden>
         <div class="alert-head">
           <span class="alert-title">⚠ 超时告警</span>
