@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1612.00" height="633.50" viewBox="0 0 1612.00 633.50" aria-label="数据可用性：索引 ump_37016433_2026.07 的 26 天里只有 10 天有数据" font-family="&quot;Microsoft YaHei&quot;, &quot;PingFang SC&quot;, &quot;Noto Sans CJK SC&quot;, ui-sans-serif, system-ui, sans-serif">
+  <rect x="0.00" y="0.00" width="1612.00" height="633.50" rx="0.00" fill="#ffffff" stroke="none" />
+  <g data-shape="node">
+    <path d="M 20.00 153.50 A 10.00 10.00 0 0 1 30.00 143.50 L 46.00 143.50 A 10.00 10.00 0 0 1 56.00 153.50 L 56.00 308.50 A 10.00 10.00 0 0 1 46.00 318.50 L 30.00 318.50 A 10.00 10.00 0 0 1 20.00 308.50 L 20.00 153.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+  </g>
+  <g data-shape="node">
+    <path d="M 17.00 348.50 A 10.00 10.00 0 0 1 27.00 338.50 L 49.00 338.50 A 10.00 10.00 0 0 1 59.00 348.50 L 59.00 362.50 A 10.00 10.00 0 0 1 49.00 372.50 L 27.00 372.50 A 10.00 10.00 0 0 1 17.00 362.50 L 17.00 348.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+    <text x="38.00" y="360.10" fill="#064e3b" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">1</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 78.00 108.50 A 10.00 10.00 0 0 1 88.00 98.50 L 104.00 98.50 A 10.00 10.00 0 0 1 114.00 108.50 L 114.00 308.50 A 10.00 10.00 0 0 1 104.00 318.50 L 88.00 318.50 A 10.00 10.00 0 0 1 78.00 308.50 L 78.00 108.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+  </g>
+  <g data-shape="node">
+    <path d="M 75.00 348.50 A 10.00 10.00 0 0 1 85.00 338.50 L 107.00 338.50 A 10.00 10.00 0 0 1 117.00 348.50 L 117.00 362.50 A 10.00 10.00 0 0 1 107.00 372.50 L 85.00 372.50 A 10.00 10.00 0 0 1 75.00 362.50 L 75.00 348.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+    <text x="96.00" y="360.10" fill="#064e3b" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">2</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 133.00 348.50 A 10.00 10.00 0 0 1 143.00 338.50 L 165.00 338.50 A 10.00 10.00 0 0 1 175.00 348.50 L 175.00 362.50 A 10.00 10.00 0 0 1 165.00 372.50 L 143.00 372.50 A 10.00 10.00 0 0 1 133.00 362.50 L 133.00 348.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="154.00" y="360.10" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">无</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 191.00 348.50 A 10.00 10.00 0 0 1 201.00 338.50 L 223.00 338.50 A 10.00 10.00 0 0 1 233.00 348.50 L 233.00 362.50 A 10.00 10.00 0 0 1 223.00 372.50 L 201.00 372.50 A 10.00 10.00 0 0 1 191.00 362.50 L 191.00 348.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="212.00" y="360.10" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">无</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 249.00 348.50 A 10.00 10.00 0 0 1 259.00 338.50 L 281.00 338.50 A 10.00 10.00 0 0 1 291.00 348.50 L 291.00 362.50 A 10.00 10.00 0 0 1 281.00 372.50 L 259.00 372.50 A 10.00 10.00 0 0 1 249.00 362.50 L 249.00 348.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="270.00" y="360.10" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">无</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 307.00 348.50 A 10.00 10.00 0 0 1 317.00 338.50 L 339.00 338.50 A 10.00 10.00 0 0 1 349.00 348.50 L 349.00 362.50 A 10.00 10.00 0 0 1 339.00 372.50 L 317.00 372.50 A 10.00 10.00 0 0 1 307.00 362.50 L 307.00 348.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="328.00" y="360.10" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">无</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 365.00 348.50 A 10.00 10.00 0 0 1 375.00 338.50 L 397.00 338.50 A 10.00 10.00 0 0 1 407.00 348.50 L 407.00 362.50 A 10.00 10.00 0 0 1 397.00 372.50 L 375.00 372.50 A 10.00 10.00 0 0 1 365.00 362.50 L 365.00 348.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="386.00" y="360.10" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">无</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 423.00 348.50 A 10.00 10.00 0 0 1 433.00 338.50 L 455.00 338.50 A 10.00 10.00 0 0 1 465.00 348.50 L 465.00 362.50 A 10.00 10.00 0 0 1 455.00 372.50 L 433.00 372.50 A 10.00 10.00 0 0 1 423.00 362.50 L 423.00 348.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="444.00" y="360.10" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">无</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 481.00 348.50 A 10.00 10.00 0 0 1 491.00 338.50 L 513.00 338.50 A 10.00 10.00 0 0 1 523.00 348.50 L 523.00 362.50 A 10.00 10.00 0 0 1 513.00 372.50 L 491.00 372.50 A 10.00 10.00 0 0 1 481.00 362.50 L 481.00 348.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="502.00" y="360.10" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">无</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 539.00 348.50 A 10.00 10.00 0 0 1 549.00 338.50 L 571.00 338.50 A 10.00 10.00 0 0 1 581.00 348.50 L 581.00 362.50 A 10.00 10.00 0 0 1 571.00 372.50 L 549.00 372.50 A 10.00 10.00 0 0 1 539.00 362.50 L 539.00 348.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="560.00" y="360.10" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">无</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 597.00 348.50 A 10.00 10.00 0 0 1 607.00 338.50 L 629.00 338.50 A 10.00 10.00 0 0 1 639.00 348.50 L 639.00 362.50 A 10.00 10.00 0 0 1 629.00 372.50 L 607.00 372.50 A 10.00 10.00 0 0 1 597.00 362.50 L 597.00 348.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="618.00" y="360.10" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">无</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 655.00 348.50 A 10.00 10.00 0 0 1 665.00 338.50 L 687.00 338.50 A 10.00 10.00 0 0 1 697.00 348.50 L 697.00 362.50 A 10.00 10.00 0 0 1 687.00 372.50 L 665.00 372.50 A 10.00 10.00 0 0 1 655.00 362.50 L 655.00 348.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="676.00" y="360.10" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">无</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 716.00 148.50 A 10.00 10.00 0 0 1 726.00 138.50 L 742.00 138.50 A 10.00 10.00 0 0 1 752.00 148.50 L 752.00 308.50 A 10.00 10.00 0 0 1 742.00 318.50 L 726.00 318.50 A 10.00 10.00 0 0 1 716.00 308.50 L 716.00 148.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+  </g>
+  <g data-shape="node">
+    <path d="M 713.00 348.50 A 10.00 10.00 0 0 1 723.00 338.50 L 745.00 338.50 A 10.00 10.00 0 0 1 755.00 348.50 L 755.00 362.50 A 10.00 10.00 0 0 1 745.00 372.50 L 723.00 372.50 A 10.00 10.00 0 0 1 713.00 362.50 L 713.00 348.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+    <text x="734.00" y="360.10" fill="#064e3b" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">13</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 774.00 147.50 A 10.00 10.00 0 0 1 784.00 137.50 L 800.00 137.50 A 10.00 10.00 0 0 1 810.00 147.50 L 810.00 308.50 A 10.00 10.00 0 0 1 800.00 318.50 L 784.00 318.50 A 10.00 10.00 0 0 1 774.00 308.50 L 774.00 147.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+  </g>
+  <g data-shape="node">
+    <path d="M 771.00 348.50 A 10.00 10.00 0 0 1 781.00 338.50 L 803.00 338.50 A 10.00 10.00 0 0 1 813.00 348.50 L 813.00 362.50 A 10.00 10.00 0 0 1 803.00 372.50 L 781.00 372.50 A 10.00 10.00 0 0 1 771.00 362.50 L 771.00 348.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+    <text x="792.00" y="360.10" fill="#064e3b" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">14</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 832.00 281.50 A 10.00 10.00 0 0 1 842.00 271.50 L 858.00 271.50 A 10.00 10.00 0 0 1 868.00 281.50 L 868.00 308.50 A 10.00 10.00 0 0 1 858.00 318.50 L 842.00 318.50 A 10.00 10.00 0 0 1 832.00 308.50 L 832.00 281.50 Z" fill="#fef3c7" stroke="#d97706" stroke-width="1.5" />
+  </g>
+  <g data-shape="node">
+    <path d="M 829.00 348.50 A 10.00 10.00 0 0 1 839.00 338.50 L 861.00 338.50 A 10.00 10.00 0 0 1 871.00 348.50 L 871.00 362.50 A 10.00 10.00 0 0 1 861.00 372.50 L 839.00 372.50 A 10.00 10.00 0 0 1 829.00 362.50 L 829.00 348.50 Z" fill="#ffffff" stroke="#fcd34d" stroke-width="1.5" />
+    <text x="850.00" y="360.10" fill="#78350f" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">15</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 887.00 348.50 A 10.00 10.00 0 0 1 897.00 338.50 L 919.00 338.50 A 10.00 10.00 0 0 1 929.00 348.50 L 929.00 362.50 A 10.00 10.00 0 0 1 919.00 372.50 L 897.00 372.50 A 10.00 10.00 0 0 1 887.00 362.50 L 887.00 348.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="908.00" y="360.10" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">无</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 945.00 348.50 A 10.00 10.00 0 0 1 955.00 338.50 L 977.00 338.50 A 10.00 10.00 0 0 1 987.00 348.50 L 987.00 362.50 A 10.00 10.00 0 0 1 977.00 372.50 L 955.00 372.50 A 10.00 10.00 0 0 1 945.00 362.50 L 945.00 348.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="966.00" y="360.10" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">无</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 1003.00 348.50 A 10.00 10.00 0 0 1 1013.00 338.50 L 1035.00 338.50 A 10.00 10.00 0 0 1 1045.00 348.50 L 1045.00 362.50 A 10.00 10.00 0 0 1 1035.00 372.50 L 1013.00 372.50 A 10.00 10.00 0 0 1 1003.00 362.50 L 1003.00 348.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="1024.00" y="360.10" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">无</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 1061.00 348.50 A 10.00 10.00 0 0 1 1071.00 338.50 L 1093.00 338.50 A 10.00 10.00 0 0 1 1103.00 348.50 L 1103.00 362.50 A 10.00 10.00 0 0 1 1093.00 372.50 L 1071.00 372.50 A 10.00 10.00 0 0 1 1061.00 362.50 L 1061.00 348.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="1082.00" y="360.10" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">无</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 1122.00 168.50 A 10.00 10.00 0 0 1 1132.00 158.50 L 1148.00 158.50 A 10.00 10.00 0 0 1 1158.00 168.50 L 1158.00 308.50 A 10.00 10.00 0 0 1 1148.00 318.50 L 1132.00 318.50 A 10.00 10.00 0 0 1 1122.00 308.50 L 1122.00 168.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+  </g>
+  <g data-shape="node">
+    <path d="M 1119.00 348.50 A 10.00 10.00 0 0 1 1129.00 338.50 L 1151.00 338.50 A 10.00 10.00 0 0 1 1161.00 348.50 L 1161.00 362.50 A 10.00 10.00 0 0 1 1151.00 372.50 L 1129.00 372.50 A 10.00 10.00 0 0 1 1119.00 362.50 L 1119.00 348.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+    <text x="1140.00" y="360.10" fill="#064e3b" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">20</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 1180.00 114.50 A 10.00 10.00 0 0 1 1190.00 104.50 L 1206.00 104.50 A 10.00 10.00 0 0 1 1216.00 114.50 L 1216.00 308.50 A 10.00 10.00 0 0 1 1206.00 318.50 L 1190.00 318.50 A 10.00 10.00 0 0 1 1180.00 308.50 L 1180.00 114.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+  </g>
+  <g data-shape="node">
+    <path d="M 1177.00 348.50 A 10.00 10.00 0 0 1 1187.00 338.50 L 1209.00 338.50 A 10.00 10.00 0 0 1 1219.00 348.50 L 1219.00 362.50 A 10.00 10.00 0 0 1 1209.00 372.50 L 1187.00 372.50 A 10.00 10.00 0 0 1 1177.00 362.50 L 1177.00 348.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+    <text x="1198.00" y="360.10" fill="#064e3b" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">21</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 1238.00 127.50 A 10.00 10.00 0 0 1 1248.00 117.50 L 1264.00 117.50 A 10.00 10.00 0 0 1 1274.00 127.50 L 1274.00 308.50 A 10.00 10.00 0 0 1 1264.00 318.50 L 1248.00 318.50 A 10.00 10.00 0 0 1 1238.00 308.50 L 1238.00 127.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+  </g>
+  <g data-shape="node">
+    <path d="M 1235.00 348.50 A 10.00 10.00 0 0 1 1245.00 338.50 L 1267.00 338.50 A 10.00 10.00 0 0 1 1277.00 348.50 L 1277.00 362.50 A 10.00 10.00 0 0 1 1267.00 372.50 L 1245.00 372.50 A 10.00 10.00 0 0 1 1235.00 362.50 L 1235.00 348.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+    <text x="1256.00" y="360.10" fill="#064e3b" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">22</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 1296.00 306.50 A 10.00 10.00 0 0 1 1306.00 296.50 L 1322.00 296.50 A 10.00 10.00 0 0 1 1332.00 306.50 L 1332.00 308.50 A 10.00 10.00 0 0 1 1322.00 318.50 L 1306.00 318.50 A 10.00 10.00 0 0 1 1296.00 308.50 L 1296.00 306.50 Z" fill="#fef3c7" stroke="#d97706" stroke-width="1.5" />
+  </g>
+  <g data-shape="node">
+    <path d="M 1293.00 348.50 A 10.00 10.00 0 0 1 1303.00 338.50 L 1325.00 338.50 A 10.00 10.00 0 0 1 1335.00 348.50 L 1335.00 362.50 A 10.00 10.00 0 0 1 1325.00 372.50 L 1303.00 372.50 A 10.00 10.00 0 0 1 1293.00 362.50 L 1293.00 348.50 Z" fill="#ffffff" stroke="#fcd34d" stroke-width="1.5" />
+    <text x="1314.00" y="360.10" fill="#78350f" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">23</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 1351.00 348.50 A 10.00 10.00 0 0 1 1361.00 338.50 L 1383.00 338.50 A 10.00 10.00 0 0 1 1393.00 348.50 L 1393.00 362.50 A 10.00 10.00 0 0 1 1383.00 372.50 L 1361.00 372.50 A 10.00 10.00 0 0 1 1351.00 362.50 L 1351.00 348.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="1372.00" y="360.10" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">无</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 1409.00 348.50 A 10.00 10.00 0 0 1 1419.00 338.50 L 1441.00 338.50 A 10.00 10.00 0 0 1 1451.00 348.50 L 1451.00 362.50 A 10.00 10.00 0 0 1 1441.00 372.50 L 1419.00 372.50 A 10.00 10.00 0 0 1 1409.00 362.50 L 1409.00 348.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="1430.00" y="360.10" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">无</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 1470.00 122.50 A 10.00 10.00 0 0 1 1480.00 112.50 L 1496.00 112.50 A 10.00 10.00 0 0 1 1506.00 122.50 L 1506.00 308.50 A 10.00 10.00 0 0 1 1496.00 318.50 L 1480.00 318.50 A 10.00 10.00 0 0 1 1470.00 308.50 L 1470.00 122.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+  </g>
+  <g data-shape="node">
+    <path d="M 1467.00 348.50 A 10.00 10.00 0 0 1 1477.00 338.50 L 1499.00 338.50 A 10.00 10.00 0 0 1 1509.00 348.50 L 1509.00 362.50 A 10.00 10.00 0 0 1 1499.00 372.50 L 1477.00 372.50 A 10.00 10.00 0 0 1 1467.00 362.50 L 1467.00 348.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+    <text x="1488.00" y="360.10" fill="#064e3b" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">26</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 17.00 598.50 A 10.00 10.00 0 0 1 27.00 588.50 L 35.00 588.50 A 10.00 10.00 0 0 1 45.00 598.50 L 45.00 606.50 A 10.00 10.00 0 0 1 35.00 616.50 L 27.00 616.50 A 10.00 10.00 0 0 1 17.00 606.50 L 17.00 598.50 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+  </g>
+  <g data-shape="node">
+    <path d="M 397.00 598.50 A 10.00 10.00 0 0 1 407.00 588.50 L 415.00 588.50 A 10.00 10.00 0 0 1 425.00 598.50 L 425.00 606.50 A 10.00 10.00 0 0 1 415.00 616.50 L 407.00 616.50 A 10.00 10.00 0 0 1 397.00 606.50 L 397.00 598.50 Z" fill="#ffffff" stroke="#fcd34d" stroke-width="1.5" />
+  </g>
+  <g data-shape="node">
+    <path d="M 777.00 598.50 A 10.00 10.00 0 0 1 787.00 588.50 L 795.00 588.50 A 10.00 10.00 0 0 1 805.00 598.50 L 805.00 606.50 A 10.00 10.00 0 0 1 795.00 616.50 L 787.00 616.50 A 10.00 10.00 0 0 1 777.00 606.50 L 777.00 598.50 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+  </g>
+  <text x="38.00" y="131.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">2.04</text>
+  <text x="38.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">07-01</text>
+  <text x="96.00" y="86.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">2.56</text>
+  <text x="96.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">07-02</text>
+  <text x="154.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">—</text>
+  <text x="212.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">—</text>
+  <text x="270.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">—</text>
+  <text x="328.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">—</text>
+  <text x="386.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">—</text>
+  <text x="444.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">—</text>
+  <text x="502.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">—</text>
+  <text x="560.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">—</text>
+  <text x="618.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">—</text>
+  <text x="676.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">—</text>
+  <text x="734.00" y="126.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">2.09</text>
+  <text x="734.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">07-13</text>
+  <text x="792.00" y="125.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">2.10</text>
+  <text x="792.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">07-14</text>
+  <text x="850.00" y="259.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">0.55</text>
+  <text x="850.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">07-15</text>
+  <text x="908.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">—</text>
+  <text x="966.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">—</text>
+  <text x="1024.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">—</text>
+  <text x="1082.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">—</text>
+  <text x="1140.00" y="146.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">1.86</text>
+  <text x="1140.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">07-20</text>
+  <text x="1198.00" y="92.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">2.49</text>
+  <text x="1198.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">07-21</text>
+  <text x="1256.00" y="105.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">2.34</text>
+  <text x="1256.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">07-22</text>
+  <text x="1314.00" y="284.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">0.25</text>
+  <text x="1314.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">07-23</text>
+  <text x="1372.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">—</text>
+  <text x="1430.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">—</text>
+  <text x="1488.00" y="100.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">2.40</text>
+  <text x="1488.00" y="404.00" fill="#475569" font-family="inherit" font-size="10" text-anchor="middle">07-26</text>
+  <text x="17.00" y="34.10" fill="#475569" font-family="inherit" font-size="16" font-weight="600">索引 ump_37016433_2026.07 · 26 天里的数据可用性（柱高 = 当日文档量 / 百万）</text>
+  <text x="17.00" y="438.10" fill="#475569" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="600.00">图 6 · 数据可用性</tspan><tspan font-weight="400.00">：索引名带月份，但 26 天里只有 </tspan><tspan font-weight="600.00">10 天有数据</tspan><tspan font-weight="400.00">（8 个全天 + 2 个部分日），16 天为空。</tspan></text>
+  <text x="17.00" y="472.70" fill="#b45309" font-family="inherit" font-size="12" xml:space="preserve"><tspan font-weight="600.00">部分日</tspan><tspan font-weight="400.00">：07-15 与 07-23 的 laneLog 只到凌晨（10.5 万 / 3.7 万条），但 data 服务日志是全天量 —— 这两天只能进服务侧统计，不能进耗时基线。</tspan></text>
+  <text x="17.00" y="507.70" fill="#b42318" font-family="inherit" font-size="12" xml:space="preserve"><tspan font-weight="600.00">MAD 基线的&quot;最近 7 天&quot;必须改口径</tspan><tspan font-weight="400.00">：按自然日取 07-20~07-26 只有 5 个有数据日（20/21/22/23/26）；要凑 7 天得跨到 07-13~15 或更早的 06-29/30（在 `2026.06` 索引里）→ 建议定义为&quot;最近 7 个有数据日&quot;，并把跨索引取数写进规格。</tspan></text>
+  <text x="17.00" y="542.70" fill="#475569" font-family="inherit" font-size="12" xml:space="preserve"><tspan font-weight="600.00">开放项</tspan><tspan font-weight="400.00">：这是采集/入库缺口，还是导出裁剪？它决定基线能否做趋势判断，也决定 07-03~12 等空白期是否还有别的索引副本。</tspan></text>
+  <text x="57.00" y="606.70" fill="#475569" font-family="inherit" font-size="12">有数据（全天）</text>
+  <text x="437.00" y="606.70" fill="#475569" font-family="inherit" font-size="12">部分日（laneLog 缺）</text>
+  <text x="817.00" y="606.70" fill="#475569" font-family="inherit" font-size="12">无数据（16 天）</text>
+</svg>

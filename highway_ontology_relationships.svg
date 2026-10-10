@@ -1,0 +1,291 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1400" viewBox="0 0 1920 1400">
+  <title>高速收费业务本体完整关系图</title>
+  <desc>以一次通行作为核心业务锚点，连接车辆与介质、路网设施、通行事件、交易与流水、技术设施、日志证据、指标、异常、告警与管理结果。实线表示业务关系，虚线表示证据或技术关联，橙色表示规则分析关系。</desc>
+  <defs>
+    <linearGradient id="header" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#123e72"/><stop offset="1" stop-color="#2877b9"/></linearGradient>
+    <linearGradient id="passage" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#edf5ff"/><stop offset="1" stop-color="#dceaff"/></linearGradient>
+    <marker id="arrowBlue" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#3777b8"/></marker>
+    <marker id="arrowGreen" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#159879"/></marker>
+    <marker id="arrowOrange" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#d88727"/></marker>
+    <marker id="arrowPurple" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#8663c7"/></marker>
+    <style>
+      text{font-family:"Microsoft YaHei","Noto Sans CJK SC",sans-serif;fill:#243c57}
+      .title{font-size:31px;font-weight:700;fill:#fff}.sub{font-size:16px;fill:#e4efff}
+      .sect{font-size:20px;font-weight:700}.nodeTitle{font-size:17px;font-weight:700}.body{font-size:14px}.small{font-size:12px}.muted{fill:#657a91}
+      .panel{fill:#fff;stroke:#d5e0ed;stroke-width:1.4}.panelHead{font-size:19px;font-weight:700;fill:#fff}
+      .node{fill:#fff;stroke:#9db8d6;stroke-width:1.5}.nodeBus{fill:#edf6ff;stroke:#6fa3dc;stroke-width:1.7}.nodeTech{fill:#f0f6ff;stroke:#9dbde4;stroke-width:1.5}.nodeEvent{fill:#eefaf5;stroke:#82c9b1;stroke-width:1.5}.nodeData{fill:#f6f1ff;stroke:#c3adea;stroke-width:1.5}.nodeWarn{fill:#fff6e9;stroke:#e5bd82;stroke-width:1.5}
+      .business{fill:none;stroke:#3777b8;stroke-width:2.4;marker-end:url(#arrowBlue)}
+      .evidence{fill:none;stroke:#159879;stroke-width:2.2;stroke-dasharray:7 5;marker-end:url(#arrowGreen)}
+      .analysis{fill:none;stroke:#d88727;stroke-width:2.4;marker-end:url(#arrowOrange)}
+      .techrel{fill:none;stroke:#8663c7;stroke-width:2.2;stroke-dasharray:5 5;marker-end:url(#arrowPurple)}
+      .edgeLabel{font-size:12px;font-weight:600;fill:#466784;paint-order:stroke;stroke:#fff;stroke-width:5px;stroke-linejoin:round}
+      .edgeGreen{font-size:12px;font-weight:600;fill:#108064;paint-order:stroke;stroke:#fff;stroke-width:5px;stroke-linejoin:round}
+      .edgeOrange{font-size:12px;font-weight:600;fill:#a96a19;paint-order:stroke;stroke:#fff;stroke-width:5px;stroke-linejoin:round}
+      .divider{stroke:#e3eaf2;stroke-width:1}
+      .bullet{font-size:13px}
+    </style>
+  </defs>
+
+  <rect width="1920" height="1400" fill="#f3f7fc"/>
+  <rect x="32" y="22" width="1856" height="92" rx="18" fill="url(#header)"/>
+  <text x="960" y="62" text-anchor="middle" class="title">高速收费业务本体关系图</text>
+  <text x="960" y="91" text-anchor="middle" class="sub">以“一次通行”为核心业务锚点：连接业务对象、事件过程、技术系统、日志证据与异常分析</text>
+
+  <!-- Legend -->
+  <g transform="translate(55,132)">
+    <path d="M0 10 H66" class="business"/><text x="78" y="15" class="body">业务关系</text>
+    <path d="M200 10 H266" class="evidence"/><text x="278" y="15" class="body">日志/证据关联</text>
+    <path d="M445 10 H511" class="analysis"/><text x="523" y="15" class="body">规则/分析关系</text>
+    <path d="M700 10 H766" class="techrel"/><text x="778" y="15" class="body">技术依赖/运行关联</text>
+    <text x="1110" y="15" class="body muted">关系方向由箭头表示；多重关系通常为 1:N 或 N:N，需按实际业务规则定义。</text>
+  </g>
+
+  <!-- Group panels -->
+  <rect x="38" y="172" width="360" height="300" rx="15" class="panel"/>
+  <rect x="38" y="172" width="360" height="43" rx="15" fill="#2469a9"/><rect x="38" y="199" width="360" height="16" fill="#2469a9"/>
+  <text x="58" y="201" class="panelHead">A. 车辆与通行介质</text>
+
+  <rect x="38" y="492" width="360" height="360" rx="15" class="panel"/>
+  <rect x="38" y="492" width="360" height="43" rx="15" fill="#2469a9"/><rect x="38" y="519" width="360" height="16" fill="#2469a9"/>
+  <text x="58" y="521" class="panelHead">B. 路网与收费设施</text>
+
+  <rect x="438" y="172" width="430" height="680" rx="15" class="panel"/>
+  <rect x="438" y="172" width="430" height="43" rx="15" fill="#315f9c"/><rect x="438" y="199" width="430" height="16" fill="#315f9c"/>
+  <text x="458" y="201" class="panelHead">C. 核心业务事实与过程事件</text>
+
+  <rect x="908" y="172" width="340" height="370" rx="15" class="panel"/>
+  <rect x="908" y="172" width="340" height="43" rx="15" fill="#138c88"/><rect x="908" y="199" width="340" height="16" fill="#138c88"/>
+  <text x="928" y="201" class="panelHead">D. 交易、收费与清分</text>
+
+  <rect x="908" y="562" width="340" height="290" rx="15" class="panel"/>
+  <rect x="908" y="562" width="340" height="43" rx="15" fill="#8060b5"/><rect x="908" y="589" width="340" height="16" fill="#8060b5"/>
+  <text x="928" y="591" class="panelHead">E. 日志与证据对象</text>
+
+  <rect x="1288" y="172" width="320" height="370" rx="15" class="panel"/>
+  <rect x="1288" y="172" width="320" height="43" rx="15" fill="#64748b"/><rect x="1288" y="199" width="320" height="16" fill="#64748b"/>
+  <text x="1308" y="201" class="panelHead">F. 软件、硬件与指标</text>
+
+  <rect x="1288" y="562" width="320" height="290" rx="15" class="panel"/>
+  <rect x="1288" y="562" width="320" height="43" rx="15" fill="#c27a27"/><rect x="1288" y="589" width="320" height="16" fill="#c27a27"/>
+  <text x="1308" y="591" class="panelHead">G. 异常与业务规则</text>
+
+  <rect x="1648" y="172" width="234" height="680" rx="15" class="panel"/>
+  <rect x="1648" y="172" width="234" height="43" rx="15" fill="#168765"/><rect x="1648" y="199" width="234" height="16" fill="#168765"/>
+  <text x="1668" y="201" class="panelHead">H. 结论与管理</text>
+
+  <!-- Connectors are behind nodes -->
+  <!-- Identity to passage -->
+  <path d="M350 255 H412 V355 H490 V414" class="business"/>
+  <text x="410" y="342" class="edgeLabel">参与通行</text>
+  <path d="M350 340 H390 V374 H490" class="business"/>
+  <text x="390" y="367" class="edgeLabel">使用介质</text>
+  <!-- road network to passage -->
+  <path d="M350 593 H414 V490 H490" class="business"/>
+  <text x="384" y="480" class="edgeLabel">入口/出口/车道</text>
+  <path d="M350 720 H404 V520 H490" class="business"/>
+  <text x="367" y="540" class="edgeLabel">经过门架/路段</text>
+  <!-- passage to finance -->
+  <path d="M805 427 H887 V274 H951" class="business"/>
+  <text x="834" y="414" class="edgeLabel">生成交易</text>
+  <!-- passage to event -->
+  <path d="M650 474 V526" class="business"/>
+  <text x="662" y="509" class="edgeLabel">包含过程事件</text>
+  <!-- passage/event to logs -->
+  <path d="M805 564 H880 V658 H951" class="evidence"/>
+  <text x="827" y="551" class="edgeGreen">关联证据</text>
+  <path d="M805 632 H875 V716 H951" class="evidence"/>
+  <text x="827" y="622" class="edgeGreen">日志佐证</text>
+  <!-- finance to logs -->
+  <path d="M1078 505 V630" class="evidence"/>
+  <text x="1090" y="568" class="edgeGreen">交易/流水证据</text>
+  <!-- tech to logs -->
+  <path d="M1448 508 V663 H1240" class="techrel"/>
+  <text x="1350" y="649" class="edgeLabel">产生/承载日志</text>
+  <!-- tech to anomalies -->
+  <path d="M1530 468 H1590 V636 H1644" class="techrel"/>
+  <text x="1554" y="622" class="edgeLabel">技术异常线索</text>
+  <!-- logs to anomaly -->
+  <path d="M1248 742 H1268 V742 H1313" class="evidence"/>
+  <text x="1255" y="729" class="edgeGreen">提供证据</text>
+  <!-- transaction to anomaly -->
+  <path d="M1248 390 H1268 V690 H1313" class="evidence"/>
+  <text x="1270" y="528" class="edgeGreen">交叉核验</text>
+  <!-- anomaly to management -->
+  <path d="M1608 720 H1626 V500 H1672" class="analysis"/>
+  <text x="1616" y="703" class="edgeOrange">触发告警</text>
+  <path d="M1608 790 H1636 V795 H1672" class="analysis"/>
+  <text x="1615" y="780" class="edgeOrange">输出影响</text>
+  <!-- Metrics to rule -->
+  <path d="M1510 500 V540 H1460 V624" class="analysis"/>
+  <text x="1471" y="557" class="edgeOrange">指标异常</text>
+  <!-- evidence to management explanatory trace -->
+  <path d="M1248 810 H1264 V832 H1625 V820 H1672" class="evidence"/>
+  <text x="1370" y="823" class="edgeGreen">可追溯证据链</text>
+
+  <!-- A Vehicle nodes -->
+  <rect x="58" y="236" width="132" height="60" rx="10" class="nodeBus"/>
+  <text x="124" y="261" text-anchor="middle" class="nodeTitle">车辆 Vehicle</text><text x="124" y="282" text-anchor="middle" class="small muted">车牌/车辆标识</text>
+  <rect x="218" y="236" width="152" height="60" rx="10" class="node"/>
+  <text x="294" y="261" text-anchor="middle" class="nodeTitle">车型 VehicleType</text><text x="294" y="282" text-anchor="middle" class="small muted">车型类别/收费分类</text>
+  <path d="M190 266 H218" class="business"/><text x="193" y="253" class="small">属于</text>
+  <rect x="58" y="317" width="132" height="60" rx="10" class="node"/>
+  <text x="124" y="342" text-anchor="middle" class="nodeTitle">OBU</text><text x="124" y="363" text-anchor="middle" class="small muted">车载单元</text>
+  <rect x="218" y="317" width="152" height="60" rx="10" class="node"/>
+  <text x="294" y="342" text-anchor="middle" class="nodeTitle">ETC 卡/介质</text><text x="294" y="363" text-anchor="middle" class="small muted">发行方/介质标识</text>
+  <path d="M124 296 V317" class="business"/><text x="134" y="310" class="small">装载/绑定</text>
+  <path d="M190 347 H218" class="business"/><text x="190" y="336" class="small">关联</text>
+  <text x="58" y="420" class="body muted">关键关系：</text><text x="58" y="443" class="body">车辆—车型、车辆—OBU、OBU—ETC介质</text>
+
+  <!-- B Road nodes -->
+  <rect x="58" y="553" width="132" height="64" rx="10" class="nodeBus"/>
+  <text x="124" y="578" text-anchor="middle" class="nodeTitle">收费站</text><text x="124" y="600" text-anchor="middle" class="small muted">入口站/出口站</text>
+  <rect x="218" y="553" width="152" height="64" rx="10" class="node"/>
+  <text x="294" y="578" text-anchor="middle" class="nodeTitle">收费车道</text><text x="294" y="600" text-anchor="middle" class="small muted">车道/栏杆/控制器</text>
+  <rect x="58" y="641" width="132" height="64" rx="10" class="node"/>
+  <text x="124" y="666" text-anchor="middle" class="nodeTitle">ETC 门架</text><text x="124" y="688" text-anchor="middle" class="small muted">门架/天线/设备</text>
+  <rect x="218" y="641" width="152" height="64" rx="10" class="node"/>
+  <text x="294" y="666" text-anchor="middle" class="nodeTitle">路段/路网</text><text x="294" y="688" text-anchor="middle" class="small muted">路段拓扑/里程</text>
+  <path d="M190 585 H218" class="business"/><text x="193" y="574" class="small">包含</text>
+  <path d="M124 617 V641" class="business"/><text x="135" y="634" class="small">部署</text>
+  <path d="M294 617 V641" class="business"/><text x="305" y="634" class="small">位于</text>
+  <text x="58" y="754" class="body muted">关键关系：</text><text x="58" y="778" class="body">站—车道、门架—路段、设施—地理位置</text>
+  <text x="58" y="810" class="small muted">一次通行可关联多个门架，需保留顺序与时间。</text>
+
+  <!-- C Passage and events -->
+  <rect x="490" y="251" width="326" height="71" rx="12" fill="#e9f5ff" stroke="#76a9de" stroke-width="1.7"/>
+  <text x="653" y="280" text-anchor="middle" class="nodeTitle">PassageEvent 过程事件</text>
+  <text x="653" y="303" text-anchor="middle" class="body">入口识别 / 门架通过 / 出口交易 / 人工操作</text>
+  <rect x="490" y="351" width="326" height="123" rx="15" fill="url(#passage)" stroke="#2c70b5" stroke-width="2.5"/>
+  <text x="653" y="385" text-anchor="middle" font-size="23" font-weight="700" fill="#174e85">一次通行 Passage</text>
+  <text x="653" y="412" text-anchor="middle" class="body">核心业务锚点 / 主要分析入口</text>
+  <line x1="514" y1="424" x2="792" y2="424" stroke="#bdd5ef"/>
+  <text x="653" y="448" text-anchor="middle" class="small">通行标识 · 车辆 · 时间 · 入口/出口 · 状态</text>
+  <rect x="490" y="526" width="326" height="76" rx="11" class="nodeEvent"/>
+  <text x="653" y="554" text-anchor="middle" class="nodeTitle">PassageStep 通行过程片段</text>
+  <text x="653" y="578" text-anchor="middle" class="body">有序门架序列、事件时间、地点和状态</text>
+  <rect x="490" y="617" width="326" height="76" rx="11" class="nodeEvent"/>
+  <text x="653" y="645" text-anchor="middle" class="nodeTitle">OperationEvent 操作事件</text>
+  <text x="653" y="669" text-anchor="middle" class="body">抬杆、拦截、人工放行、流水修改等</text>
+  <rect x="490" y="708" width="326" height="105" rx="11" fill="#f8fbff" stroke="#bdcce0"/>
+  <text x="510" y="735" class="nodeTitle">通行事实属性</text>
+  <text x="510" y="760" class="body">通行ID、车辆ID、入口/出口、起止时间</text>
+  <text x="510" y="784" class="body">经过门架序列、关联交易、结果状态</text>
+  <text x="510" y="804" class="small muted">记录本身可以被核验；不预设绝对正确。</text>
+  <path d="M653 322 V351" class="business"/><text x="664" y="341" class="small">组成/关联</text>
+  <path d="M653 474 V526" class="business"/><text x="664" y="505" class="small">拆解过程</text>
+  <path d="M653 602 V617" class="business"/>
+  <path d="M653 693 V708" class="business"/>
+
+  <!-- D Finance -->
+  <rect x="930" y="235" width="296" height="58" rx="10" class="nodeBus"/>
+  <text x="1078" y="260" text-anchor="middle" class="nodeTitle">收费交易 Transaction</text><text x="1078" y="281" text-anchor="middle" class="small muted">交易号/状态/计费结果</text>
+  <rect x="930" y="310" width="136" height="64" rx="10" class="node"/>
+  <text x="998" y="337" text-anchor="middle" class="nodeTitle">应收金额</text><text x="998" y="358" text-anchor="middle" class="small muted">计费结果</text>
+  <rect x="1080" y="310" width="146" height="64" rx="10" class="node"/>
+  <text x="1153" y="337" text-anchor="middle" class="nodeTitle">实收/支付记录</text><text x="1153" y="358" text-anchor="middle" class="small muted">支付结果/时间</text>
+  <rect x="930" y="390" width="136" height="64" rx="10" class="node"/>
+  <text x="998" y="417" text-anchor="middle" class="nodeTitle">收费流水</text><text x="998" y="438" text-anchor="middle" class="small muted">流水号/金额</text>
+  <rect x="1080" y="390" width="146" height="64" rx="10" class="node"/>
+  <text x="1153" y="417" text-anchor="middle" class="nodeTitle">清分结算记录</text><text x="1153" y="438" text-anchor="middle" class="small muted">清分状态/结果</text>
+  <rect x="930" y="469" width="296" height="48" rx="9" fill="#e9f9f4" stroke="#92d4c2"/>
+  <text x="1078" y="499" text-anchor="middle" class="body">核对：应收 ↔ 实收 ↔ 流水 ↔ 清分</text>
+  <path d="M998 293 V310" class="business"/><text x="1008" y="305" class="small">计算</text>
+  <path d="M1153 293 V310" class="business"/><text x="1163" y="305" class="small">支付</text>
+  <path d="M998 374 V390" class="business"/><text x="1008" y="386" class="small">形成</text>
+  <path d="M1153 374 V390" class="business"/><text x="1163" y="386" class="small">进入</text>
+  <path d="M998 454 V469" class="analysis"/><path d="M1153 454 V469" class="analysis"/>
+
+  <!-- E Evidence -->
+  <rect x="930" y="620" width="136" height="62" rx="10" class="nodeData"/>
+  <text x="998" y="645" text-anchor="middle" class="nodeTitle">LogRecord 日志记录</text><text x="998" y="666" text-anchor="middle" class="small muted">原始内容/时间/字段</text>
+  <rect x="1080" y="620" width="146" height="62" rx="10" class="nodeData"/>
+  <text x="1153" y="645" text-anchor="middle" class="nodeTitle">LogSource 日志来源</text><text x="1153" y="666" text-anchor="middle" class="small muted">ES/文件/数据库/API</text>
+  <rect x="930" y="700" width="296" height="56" rx="10" class="node"/>
+  <text x="1078" y="724" text-anchor="middle" class="nodeTitle">Evidence 证据项</text><text x="1078" y="745" text-anchor="middle" class="small muted">来源、关联键、查询条件、可信度</text>
+  <rect x="930" y="770" width="296" height="58" rx="10" fill="#f0fbf7" stroke="#91d1bc"/>
+  <text x="1078" y="794" text-anchor="middle" class="nodeTitle">关联策略</text><text x="1078" y="815" text-anchor="middle" class="small">业务ID优先；其次交易号；再用时间/设备辅助</text>
+  <path d="M1066 651 H1080" class="evidence"/><text x="1066" y="610" class="small">来自</text>
+  <path d="M998 682 V700" class="evidence"/><path d="M1153 682 V700" class="evidence"/>
+  <path d="M1078 756 V770" class="evidence"/>
+
+  <!-- F Technical objects -->
+  <rect x="1310" y="235" width="134" height="64" rx="10" class="nodeTech"/>
+  <text x="1377" y="260" text-anchor="middle" class="nodeTitle">软件服务</text><text x="1377" y="282" text-anchor="middle" class="small muted">Service/Process</text>
+  <rect x="1462" y="235" width="126" height="64" rx="10" class="nodeTech"/>
+  <text x="1525" y="260" text-anchor="middle" class="nodeTitle">服务器</text><text x="1525" y="282" text-anchor="middle" class="small muted">主机/容器</text>
+  <rect x="1310" y="323" width="134" height="64" rx="10" class="nodeTech"/>
+  <text x="1377" y="348" text-anchor="middle" class="nodeTitle">硬件设备</text><text x="1377" y="370" text-anchor="middle" class="small muted">栏杆/天线/控制器</text>
+  <rect x="1462" y="323" width="126" height="64" rx="10" class="nodeTech"/>
+  <text x="1525" y="348" text-anchor="middle" class="nodeTitle">部署位置</text><text x="1525" y="370" text-anchor="middle" class="small muted">站/车道/门架</text>
+  <rect x="1310" y="412" width="278" height="73" rx="10" class="node"/>
+  <text x="1449" y="438" text-anchor="middle" class="nodeTitle">Metric 指标</text><text x="1449" y="460" text-anchor="middle" class="body">过车耗时、交易成功率、金额差异率</text><text x="1449" y="478" text-anchor="middle" class="small muted">由业务事实/事件按口径计算</text>
+  <path d="M1444 267 H1462" class="techrel"/><text x="1443" y="255" class="small">部署于</text>
+  <path d="M1377 299 V323" class="techrel"/><text x="1387" y="315" class="small">监控/依赖</text>
+  <path d="M1444 355 H1462" class="techrel"/><text x="1443" y="343" class="small">部署在</text>
+  <path d="M1449 387 V412" class="analysis"/><text x="1460" y="404" class="small">汇总</text>
+
+  <!-- G Anomaly and rules -->
+  <rect x="1310" y="620" width="134" height="62" rx="10" class="nodeWarn"/>
+  <text x="1377" y="645" text-anchor="middle" class="nodeTitle">BusinessRule</text><text x="1377" y="666" text-anchor="middle" class="small muted">阈值/状态/时序</text>
+  <rect x="1462" y="620" width="126" height="62" rx="10" class="nodeWarn"/>
+  <text x="1525" y="645" text-anchor="middle" class="nodeTitle">Anomaly</text><text x="1525" y="666" text-anchor="middle" class="small muted">异常事件/案件</text>
+  <rect x="1310" y="700" width="278" height="59" rx="10" class="nodeWarn"/>
+  <text x="1449" y="724" text-anchor="middle" class="nodeTitle">异常场景</text><text x="1449" y="746" text-anchor="middle" class="body">过车慢 / 疑似私自放车 / 流水修改</text>
+  <rect x="1310" y="777" width="278" height="51" rx="10" fill="#fff0e9" stroke="#e8b49a"/>
+  <text x="1449" y="799" text-anchor="middle" class="nodeTitle">影响范围</text><text x="1449" y="818" text-anchor="middle" class="small">涉及车辆、交易、金额、站点、设备</text>
+  <path d="M1444 651 H1462" class="analysis"/><text x="1443" y="610" class="small">判定</text>
+  <path d="M1525 682 V700" class="analysis"/><path d="M1377 682 V700" class="analysis"/>
+  <path d="M1449 759 V777" class="analysis"/>
+
+  <!-- H Management -->
+  <rect x="1668" y="235" width="194" height="72" rx="11" class="nodeEvent"/>
+  <text x="1765" y="263" text-anchor="middle" class="nodeTitle">Alert 告警</text><text x="1765" y="286" text-anchor="middle" class="body">级别/时间/状态/负责人</text>
+  <rect x="1668" y="325" width="194" height="86" rx="11" class="node"/>
+  <text x="1765" y="352" text-anchor="middle" class="nodeTitle">DiagnosticResult</text><text x="1765" y="376" text-anchor="middle" class="body">发生了什么</text><text x="1765" y="397" text-anchor="middle" class="body">依据是什么/可能原因</text>
+  <rect x="1668" y="430" width="194" height="86" rx="11" class="node"/>
+  <text x="1765" y="457" text-anchor="middle" class="nodeTitle">ImpactAssessment</text><text x="1765" y="481" text-anchor="middle" class="body">影响哪些业务对象</text><text x="1765" y="502" text-anchor="middle" class="body">涉及多少交易/金额</text>
+  <rect x="1668" y="535" width="194" height="83" rx="11" class="node"/>
+  <text x="1765" y="562" text-anchor="middle" class="nodeTitle">管理总览</text><text x="1765" y="586" text-anchor="middle" class="body">站点/路网/省中心</text><text x="1765" y="606" text-anchor="middle" class="body">趋势/分布/待处置事项</text>
+  <rect x="1668" y="638" width="194" height="87" rx="11" fill="#effaf5" stroke="#91d1b6"/>
+  <text x="1765" y="665" text-anchor="middle" class="nodeTitle">处置闭环</text><text x="1765" y="689" text-anchor="middle" class="body">派单 / 处理 / 复核</text><text x="1765" y="710" text-anchor="middle" class="body">处置结果回写</text>
+  <rect x="1668" y="745" width="194" height="83" rx="11" fill="#edf5ff" stroke="#a5c8ee"/>
+  <text x="1765" y="772" text-anchor="middle" class="nodeTitle">中心级应用</text><text x="1765" y="796" text-anchor="middle" class="body">跨站关联/省级汇总</text><text x="1765" y="817" text-anchor="middle" class="body">统一指标和业务语义</text>
+  <path d="M1765 307 V325" class="analysis"/><path d="M1765 411 V430" class="analysis"/><path d="M1765 516 V535" class="analysis"/><path d="M1765 618 V638" class="analysis"/><path d="M1765 725 V745" class="business"/>
+
+  <!-- Relation contracts -->
+  <rect x="38" y="882" width="1844" height="240" rx="15" class="panel"/>
+  <rect x="38" y="882" width="1844" height="44" rx="15" fill="#314d70"/><rect x="38" y="910" width="1844" height="16" fill="#314d70"/>
+  <text x="60" y="911" class="panelHead">核心关系清单（建议作为第一版本体关系定义起点）</text>
+  <line x1="650" y1="941" x2="650" y2="1100" class="divider"/><line x1="1260" y1="941" x2="1260" y2="1100" class="divider"/>
+  <text x="60" y="957" class="nodeTitle">业务关系</text>
+  <text x="60" y="982" class="bullet">车辆 — has_type → 车型；车辆 — uses → OBU/ETC介质</text>
+  <text x="60" y="1007" class="bullet">车辆 — participates_in → 通行；通行 — enters_at/exits_at → 收费站</text>
+  <text x="60" y="1032" class="bullet">通行 — uses → 车道；通行 — traverses → 门架/路段（有序多值）</text>
+  <text x="60" y="1057" class="bullet">通行 — generates → 交易；交易 — records → 应收/实收/流水/清分</text>
+  <text x="60" y="1082" class="bullet">站点 — contains → 车道；门架/车道 — located_at → 路网位置</text>
+
+  <text x="674" y="957" class="nodeTitle">证据与技术关系</text>
+  <text x="674" y="982" class="bullet">过程事件 — evidenced_by → 日志记录；日志记录 — belongs_to → 日志来源</text>
+  <text x="674" y="1007" class="bullet">软件服务 — deployed_on → 服务器；设备 — installed_at → 站/车道/门架</text>
+  <text x="674" y="1032" class="bullet">软件/设备 — emits → 日志事件；指标 — calculated_from → 业务事实/事件</text>
+  <text x="674" y="1057" class="bullet">证据项 — supports/contradicts → 业务判断（需保留时间与来源）</text>
+  <text x="674" y="1082" class="bullet">通行记录、交易记录与日志关联优先使用稳定业务标识</text>
+
+  <text x="1284" y="957" class="nodeTitle">分析与处置关系</text>
+  <text x="1284" y="982" class="bullet">规则 — evaluates → 事实/事件/证据；规则 — detects → 异常</text>
+  <text x="1284" y="1007" class="bullet">异常 — affects → 通行/交易/设备；异常 — supported_by → 证据项</text>
+  <text x="1284" y="1032" class="bullet">异常 — triggers → 告警；异常 — impacts → 业务对象/金额/站点</text>
+  <text x="1284" y="1057" class="bullet">告警 — handled_by → 处置流程；处置 — updates → 状态/结论</text>
+  <text x="1284" y="1082" class="bullet">结论应区分：已证实事实、规则推断、待核实假设</text>
+
+  <!-- Bottom principles -->
+  <rect x="38" y="1144" width="1844" height="218" rx="15" fill="#eaf2fc" stroke="#b9cde4" stroke-width="1.4"/>
+  <text x="62" y="1182" class="sect">建模边界与实施原则</text>
+  <g transform="translate(62,1202)">
+    <circle cx="10" cy="13" r="6" fill="#2b70b6"/><text x="28" y="18" class="body">一次通行是核心业务锚点，不是唯一事实来源；交易、操作和异常事件也可以独立存在。</text>
+    <circle cx="10" cy="48" r="6" fill="#2b70b6"/><text x="28" y="53" class="body">通行记录表负责索引与查询入口，ES/文件保留原始日志；本体统一业务对象、关系和语义，不要求复制全部数据。</text>
+    <circle cx="10" cy="83" r="6" fill="#159879"/><text x="28" y="88" class="body">日志是证据和线索，不应直接等同业务事实；数据缺失、冲突、延迟和弱关联必须显式标记。</text>
+    <circle cx="10" cy="118" r="6" fill="#d88727"/><text x="28" y="123" class="body">“关联”不自动代表“因果”：原因判断应由可验证的规则、时间顺序和证据链支持。</text>
+    <circle cx="10" cy="153" r="6" fill="#6550b8"/><text x="28" y="158" class="body">第一阶段先验证一次通行还原、金额/流水核对、一个典型异常场景，并与传统查询做同数据对照。</text>
+  </g>
+</svg>

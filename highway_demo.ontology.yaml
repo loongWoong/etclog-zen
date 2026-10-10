@@ -1,0 +1,1557 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# 高速公路 ETC 车道过车记录本体  highway_demo.ontology
+# ───────────────────────────────────────────────────────────────────────────
+# 生成依据（四合一）：
+#   1) 原本体：com.highway.ontology 的对象类型/关系/函数/规则
+#   2) 物理结构：PostgreSQL 表 public.vehicle_pass_record（62 列，见 vehicle_pass_record.ddl.sql）
+#   3) 日志口径：《交易日志监测和分析系统方案设计V2.1》4.2 时间节点表
+#                《本体分析方案与实例规格V1》2.2 时间语义字典 / 5.2 T1 与两个耗时
+#   4) 对象归属：用户《高速日志归集表与对象关系标注》5 组对象 + 第 3 组按
+#                「设施 / 硬件设备 / 软件服务」单独拆分（本轮重构）
+#
+# 对象清单（每列只归属一个对象；同名物理属性在全文件中只出现一次）：
+#   过车记录·整体对象  VehiclePassRecord  id/pass_id/trade_id/waste_id + 审计列 + 派生
+#   设施  Station 收费站      station_id/station_name
+#         Lane    收费车道    lane_id/lane_hex/lane_type
+#   车辆与介质  Vehicle 车辆  plate_no…axle_type
+#         TollMedium 通行介质  obu_id/obu_mac/obu_serial_number/card_no/media_no/media_type
+#   硬件设备  VehicleDetector         车辆检测器  detector1|2|6|7 信号与离开时间
+#         PlateRecognitionDevice 车牌识别设备  plate_capture_time/plate_capture_plate
+#         RsuUnit                RSU读写单元  （本表无专属列，仅同行投影主键）
+#         BarrierGate            栏杆机      gate_open_time/gate_finish_time
+#         DisplaySignalUnit      显示屏信号灯 （本表无专属列，仅同行投影主键）
+#   软件服务  BillingService        计费服务  billing_*/pay_*/trans_time/pay_type/fee/pay_fee
+#         TradeService          交易服务  xp_time/cpc_time/full_tolling_save_time/
+#                                        redis_save_time/error_code/batch_num/shift/work_date
+#         AuthorizationService  授权服务  （本表无专属列，仅同行投影主键）
+#         MessageCacheService   消息缓存服务  waste_generate_time
+#         DeviceControlService  设备控制服务  b2…e1 帧时间与 5 个帧错误码
+#         LaneFrontendService   车道前端服务  （本表无专属列，仅同行投影主键）
+#   原本体保留  BusinessResult / BusinessRule / LogRecord（演示库表）
+#
+# 投影说明：Station/Lane/Vehicle/TollMedium 及全部硬件/服务对象的数据源都是归集表
+#   vehicle_pass_record（同表投影）。硬件与服务对象的行身份用属性 pass_record_id
+#   （→ vehicle_pass_record.id）作主键；除该表外的对象/关系表沿用原本体定义。
+#   FacilityAndService、Device、SoftwareService 三个粗粒度对象已被上述细分对象取代。
+#
+# 映射约定：
+#   · 属性名 = 物理列名（DDL 原样小写），field_mapping 为同名映射；派生属性为别名映射
+#   · required 与 DDL 的 NOT NULL 对齐；timestamp→date、int2/int4/tinyint→int、varchar/text→string
+#   · 5 个 *_errcode 为本次补充属性，提供的 DDL 中尚无对应列（见文末第 12 条）
+#   · 每个对象恰有一个 primary_key: true 属性（平台保存强约束）
+# ═══════════════════════════════════════════════════════════════════════════
+version: "1.0"
+namespace: com.highway.ontology
+
+data_sources:
+  - id: "highway_demo"
+    type: postgresql
+    database: highway_demo
+    jdbc_url: "jdbc:postgresql://127.0.0.1:5432/highway_demo?currentSchema=public"
+    # 若需与示例同构的本地演示库（sqlite），仅替换下面两行为：
+    #   type: sqlite
+    #   jdbc_url: jdbc:sqlite:data/highway_demo.db
+
+
+object_types:
+
+  - name: VehiclePassRecord
+    display_name: 过车记录
+    description: 过车记录聚合根：一辆车在一个车道从感知、识别、计费、交易、放行到生成流水的完整过程，其余列按关联对象拆分。
+    role: aggregate_root
+    properties:
+      - name: id
+        display_name: 自增主键
+        data_type: string
+        required: true
+        unique: true
+        primary_key: true
+        description: 主键（uuid），过车记录唯一标识；既是本对象行身份，也是各投影对象的行身份
+      - name: pass_id
+        display_name: 过车唯一ID
+        data_type: string
+        required: true
+        description: 过车唯一ID，取自 passId，用户标注为一次过车最合适的唯一键（如 0137012304232367582655 **** **** 2211）；站级流水按入口/出口各出一条记录时的 passId 分段口径需确认
+      - name: trade_id
+        display_name: 交易ID
+        data_type: string
+        required: false
+        description: 交易ID，与站级数据库流水对应，如 G001537005003020209102026070112071625；失败或无交易时为空
+      - name: waste_id
+        display_name: 流水ID
+        data_type: string
+        required: false
+        description: 流水ID（用户标注），日志中对应 WASTE_* 流水键，与 waste_generate_time（流水生成时间，消息/缓存服务）配套；无流水时为空
+      - name: ext_attributes
+        display_name: 扩展属性
+        data_type: string
+        required: false
+        description: 扩展属性（JSON 文本），承载未单独入列的报文/位元实体字段，如入口站 EnStation/入口时间 EnTime、限重 LimitWeight；本次标注未归类，暂挂整体对象
+      - name: create_time
+        display_name: 记录创建时间
+        data_type: date
+        required: false
+        description: 记录入库创建时间（DEFAULT CURRENT_TIMESTAMP）；本次标注未归类
+      - name: update_time
+        display_name: 记录更新时间
+        data_type: date
+        required: false
+        description: 记录更新时间（DEFAULT CURRENT_TIMESTAMP）；本次标注未归类
+
+      # ── 派生属性（通行级，载体列归属其他对象） ──
+      - name: entry_time
+        display_name: 进入收费车道时间
+        data_type: date
+        required: false
+        description: 派生。即 T1 车辆到达时间；载体列 a1_frame_time 属 DeviceControlService，实际取值由 compute_pass_time_nodes 按车道类型判定（混合车道优先 A1，缺失退 min(plate_capture_time, b2_frame_time)；ETC 专用车道禁用 A1，否则耗时会出现负值——见规格 5.5 R1）
+      - name: exit_time
+        display_name: 驶离收费车道时间
+        data_type: date
+        required: false
+        description: 派生。即 T4 车辆压过线圈（驶离）时间；载体列 detector7_time 属 VehicleDetector
+      - name: total_fee
+        display_name: 应收总金额
+        data_type: int
+        required: false
+        description: 派生。等同物理列 fee（归属 BillingService·计费服务）；实收为 pay_fee，样例差额 798 与计费响应的 discountFee 一致
+      - name: status
+        display_name: 通行状态
+        data_type: string
+        required: false
+        description: 派生。依据 error_code（交易特情码）、waste_id/waste_generate_time（流水）、gate_finish_time（抬杆到位即放行证据）组合判定；状态枚举（处理中/已放行/交易失败/特情待处理）来自原本体定义，生产库尚未见落库枚举，待定义后固化
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      id_column: id
+      field_mapping:
+        id: id
+        pass_id: pass_id
+        trade_id: trade_id
+        waste_id: waste_id
+        ext_attributes: ext_attributes
+        create_time: create_time
+        update_time: update_time
+        # 派生属性 → 载体列（归属设备控制服务/车辆检测器/计费服务/交易服务，跨对象派生）
+        entry_time: a1_frame_time
+        exit_time: detector7_time
+        total_fee: fee
+        status: error_code
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # 2 设施对象 · 收费站
+  # ═══════════════════════════════════════════════════════════════════════
+
+  - name: Station
+    display_name: 收费站
+    description: 收费站/门架维度（用户标注的设施对象之一），由归集表 station_id/station_name 投影，实例为本次通行所属收费站。
+    role: dimension
+    properties:
+      - name: station_id
+        display_name: 收费站/门架编号
+        data_type: string
+        required: false
+        unique: true
+        primary_key: true
+        description: 收费站/门架 Hex 编号（用户标注），如 37016433
+      - name: station_name
+        display_name: 收费站名称
+        data_type: string
+        required: false
+        description: 收费站中文名，如 山东王台站
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      id_column: station_id
+      field_mapping:
+        station_id: station_id
+        station_name: station_name
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # 3 设施对象 · 车道
+  # ═══════════════════════════════════════════════════════════════════════
+
+  - name: Lane
+    display_name: 车道
+    description: 车道维度（用户标注的设施对象之一），由归集表 lane_id/lane_hex/lane_type 投影；车道类型与线圈组合是过车慢分组与邻道干扰的前置条件。
+    role: dimension
+    properties:
+      - name: lane_id
+        display_name: 车道号
+        data_type: string
+        required: false
+        description: 车道号（十进制），由车道 Hex 低字节换算，如 91
+      - name: lane_hex
+        display_name: 车道十六进制
+        data_type: string
+        required: false
+        unique: true
+        primary_key: true
+        description: 车道 Hex 编号，取日志第二个中括号，如 370164335B
+      - name: lane_type
+        display_name: 车道类型
+        data_type: string
+        required: false
+        description: 车道类型代码（样例 04 对应 ETC 专用车道、6 对应匝道），混合车道等取值以站级车道字典为准
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      id_column: lane_hex
+      field_mapping:
+        lane_id: lane_id
+        lane_hex: lane_hex
+        lane_type: lane_type
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # 4 车辆对象（含下属通行介质）
+  # ═══════════════════════════════════════════════════════════════════════
+
+  - name: Vehicle
+    display_name: 车辆
+    description: 车辆维度（用户标注的车辆对象），由归集表车辆属性列投影；通行介质作为其下属对象见 TollMedium。
+    role: dimension
+    properties:
+      - name: plate_no
+        display_name: 车牌号
+        data_type: string
+        required: false
+        unique: true
+        primary_key: true
+        data_classification: 2
+        description: 交易/OBU 侧确认的车牌号，如 鲁UG6595；与 plate_capture_plate（牌识结果）不一致时需核查
+      - name: plate_color
+        display_name: 车牌颜色
+        data_type: string
+        required: false
+        description: 车牌颜色代码。README.md 用 6000 条样本做车型×颜色交叉验证得到的码表为 0 蓝 / 1 黄 / 2 黑 / 3 白 / 4 绿 / 255 未上报（样例 1 即黄牌，与重卡一致）；厂商码表仍须生产侧确认
+      - name: vehicle_type
+        display_name: 车型
+        data_type: string
+        required: false
+        description: 计费车型代码，按部标 JT/T 489 分类，样例 12 即两轴货；README.md 给出的映射为 1 轿车 / 2 中客 / 3 客车 / 4 大客 / 11 轻卡 / 12 两轴货 / 13 三轴货 / 14 四轴货 / 15 半挂五轴 / 16 半挂六轴 / 21–26 专项作业车。是过车慢 MAD 的分组键之一
+      - name: actual_fee_class
+        display_name: 实际收费类别
+        data_type: string
+        required: false
+        description: 实际收费类别（用户标注）；位元实体 ActualFeeClass 样例 1，与 vehicle_type 比对可发现车型/费率不一致
+      - name: vehicle_model
+        display_name: 车辆型号/描述
+        data_type: string
+        required: false
+        description: 车辆型号/描述（用户标注）；README.md 指出该字段在 749 条样本里恒为 0000，实际可用性低
+      - name: axle_count
+        display_name: 轴数
+        data_type: int
+        required: false
+        description: 计费轴数（用户标注 TINYINT，物理列为 int2），样例 2
+      - name: identify_axle_count
+        display_name: 识别轴数
+        data_type: int
+        required: false
+        description: 识别轴数，与 axle_count 不一致时可作为计重异常/特情线索
+      - name: axle_type
+        display_name: 轴型
+        data_type: string
+        required: false
+        description: 轴型描述
+      - name: vehicle_id
+        display_name: 车辆ID
+        data_type: string
+        required: false
+        description: 派生。车辆业务主体标识（别名映射 plate_no）；建议优先级为 完整 OBU > 卡号 > 车牌号+车牌颜色（《本体规格V1》2.3 的降级链无卡号级，两份依据不一致，落地前须统一）
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      id_column: plate_no
+      field_mapping:
+        plate_no: plate_no
+        plate_color: plate_color
+        vehicle_type: vehicle_type
+        actual_fee_class: actual_fee_class
+        vehicle_model: vehicle_model
+        axle_count: axle_count
+        identify_axle_count: identify_axle_count
+        axle_type: axle_type
+        vehicle_id: plate_no
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # 5 通行介质对象（车辆下属：OBU / ETC卡 / CPC卡）
+  # ═══════════════════════════════════════════════════════════════════════
+
+  - name: TollMedium
+    display_name: 通行介质
+    description: 车辆下属的通行介质维度（用户标注的车辆对象下属成员），含 OBU 侧与 ETC/CPC 卡侧属性，由 media_type 判读；由归集表介质属性列投影。
+    role: dimension
+    properties:
+      - name: obu_id
+        display_name: OBU编号
+        data_type: string
+        required: false
+        description: OBU 编号（用户标注，关联 OBU），如 3701084323005665，取 B2 帧 serialNumber；media_no 未必等于 OBU 编号（按介质类型取值）
+      - name: obu_mac
+        display_name: OBU的MAC
+        data_type: string
+        required: false
+        description: OBU 侧 8 位 Hex 标识（用户标注 OBU MAC），如 3DF35ED4。本站日志中该值即《本体规格V1》2.3 所称 OBU ID 与交易分组键，与 obu_id 的口径需统一；禁止仅用 1 字节的截断字段做邻道干扰判定
+      - name: obu_serial_number
+        display_name: OBU序列号
+        data_type: string
+        required: false
+        description: OBU 出厂序列号（用户标注），B2 帧 serialNumber，如 3701084323005665；与 obu_id 的差异待接口字典确认
+      - name: card_no
+        display_name: ETC卡号/CPU卡号
+        data_type: string
+        required: false
+        description: ETC 卡号/CPU 卡号（用户标注），如 2304232367582655；与 media_no 的取值关系需按介质类型判定
+      - name: media_no
+        display_name: 介质编号/卡号
+        data_type: string
+        required: false
+        unique: true
+        primary_key: true
+        description: 介质编号/卡号（用户标注），OBU 编号/ETC 卡号/CPC 卡号/车牌，按 media_type 判读
+      - name: media_type
+        display_name: 介质类型
+        data_type: string
+        required: false
+        description: 介质类型（用户标注），样例 1 为 OBU；完整码表待生产字典确认
+      - name: medium_id
+        display_name: 通行介质ID
+        data_type: string
+        required: false
+        description: 派生。通行介质ID（别名映射 media_no）
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      id_column: media_no
+      field_mapping:
+        obu_id: obu_id
+        obu_mac: obu_mac
+        obu_serial_number: obu_serial_number
+        card_no: card_no
+        media_no: media_no
+        media_type: media_type
+        medium_id: media_no
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # 6 设备对象（车牌识别设备 / 栏杆机 / 车辆检测器）
+  # ═══════════════════════════════════════════════════════════════════════
+
+  - name: VehicleDetector
+    display_name: 车辆检测器
+    description: 车辆检测器（硬件）：车检器 1/2/6/7 的有信号与离开时间点，是 T1/T4 与耗时基线的来源。
+    role: fact
+    properties:
+      - name: pass_record_id
+        display_name: 通行记录标识
+        data_type: string
+        required: true
+        unique: true
+        primary_key: true
+        description: 同行投影的行身份，取 vehicle_pass_record.id，用于与通行记录建立关联
+      - name: detector1_time
+        display_name: 车检器1时间
+        data_type: date
+        required: false
+        description: 车检器 1 有信号时间（用户标注，关联车辆检测器）；ETC 车道第 1 个车辆检测器，混合车道无此线圈（README.md 线圈映射）
+      - name: detector1_leave_time
+        display_name: 车检器1离开时间
+        data_type: date
+        required: false
+        description: 车检器 1 无信号（离开）时间（用户标注，关联车辆检测器）
+      - name: detector2_time
+        display_name: 车检器2时间
+        data_type: date
+        required: false
+        description: 车检器 2 有信号时间（用户标注，关联车辆检测器）；ETC 车道第 2 个车辆检测器
+      - name: detector2_leave_time
+        display_name: 车检器2离开时间
+        data_type: date
+        required: false
+        description: 车检器 2 无信号（离开）时间（用户标注，关联车辆检测器）
+      - name: detector6_time
+        display_name: 车检器6时间
+        data_type: date
+        required: false
+        description: 车检器 6 有信号时间（用户标注，关联车辆检测器）；MTC/混合车道存在线圈，对应 A1 口径
+      - name: detector6_leave_time
+        display_name: 车检器6离开时间
+        data_type: date
+        required: false
+        description: 车检器 6 无信号（离开）时间（用户标注，关联车辆检测器）
+      - name: detector7_time
+        display_name: 车检器7时间
+        data_type: date
+        required: false
+        description: 车检器 7 有信号时间（用户标注，关联车辆检测器）；落杆线圈，ETC 与混合车道均有，对应时间节点 T4（车辆压过线圈驶离）
+      - name: detector7_leave_time
+        display_name: 车检器7离开时间
+        data_type: date
+        required: false
+        description: 车检器 7 无信号（离开）时间（用户标注，关联车辆检测器）
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      id_column: id
+      field_mapping:
+        pass_record_id: id
+        detector1_time: detector1_time
+        detector1_leave_time: detector1_leave_time
+        detector2_time: detector2_time
+        detector2_leave_time: detector2_leave_time
+        detector6_time: detector6_time
+        detector6_leave_time: detector6_leave_time
+        detector7_time: detector7_time
+        detector7_leave_time: detector7_leave_time
+
+  - name: PlateRecognitionDevice
+    display_name: 车牌识别设备
+    description: 车牌识别设备（硬件）：抓拍时间 B1 与牌识车牌，用于与交易侧车牌比对。
+    role: fact
+    properties:
+      - name: pass_record_id
+        display_name: 通行记录标识
+        data_type: string
+        required: true
+        unique: true
+        primary_key: true
+        description: 同行投影的行身份，取 vehicle_pass_record.id，用于与通行记录建立关联
+      - name: plate_capture_time
+        display_name: 车牌抓拍时间
+        data_type: date
+        required: false
+        description: 车牌抓拍时间（用户标注，关联车牌识别设备），对应时间节点 B1（建议取抓拍日志最后一行时间，而非报文内嵌拍摄时间）
+      - name: plate_capture_plate
+        display_name: 车牌抓拍车牌
+        data_type: string
+        required: false
+        data_classification: 2
+        description: 车牌抓拍车牌（用户标注，关联车牌识别设备）；牌识结果，可能缺失或与 plate_no 不一致，需比对
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      id_column: id
+      field_mapping:
+        pass_record_id: id
+        plate_capture_time: plate_capture_time
+        plate_capture_plate: plate_capture_plate
+
+  - name: RsuUnit
+    display_name: RSU读写单元
+    description: RSU 读写单元（硬件）：以 B2/B4/B5 帧与 OBU 交互；本表无 RSU 编号列，帧时间归属设备控制服务。
+    role: fact
+    properties:
+      - name: pass_record_id
+        display_name: 通行记录标识
+        data_type: string
+        required: true
+        unique: true
+        primary_key: true
+        description: 同行投影的行身份，取 vehicle_pass_record.id，用于与通行记录建立关联
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      id_column: id
+      field_mapping:
+        pass_record_id: id
+
+  - name: BarrierGate
+    display_name: 栏杆机
+    description: 栏杆机（硬件）：执行抬杆请求 T2 与抬杆到位 T3 上报，是放行判定与 T3-T1 的证据。
+    role: fact
+    properties:
+      - name: pass_record_id
+        display_name: 通行记录标识
+        data_type: string
+        required: true
+        unique: true
+        primary_key: true
+        description: 同行投影的行身份，取 vehicle_pass_record.id，用于与通行记录建立关联
+      - name: gate_open_time
+        display_name: 抬杆请求时间
+        data_type: date
+        required: false
+        description: 抬杆请求时间（用户标注，关联栏杆机），对应时间节点 T2（栏杆控制指令 E4010101）
+      - name: gate_finish_time
+        display_name: 抬杆到位时间
+        data_type: date
+        required: false
+        description: 抬杆到位时间（用户标注，关联栏杆机），对应时间节点 T3（只认 barStaus=01 的到位上报，禁止取 E4 回声行）
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      id_column: id
+      field_mapping:
+        pass_record_id: id
+        gate_open_time: gate_open_time
+        gate_finish_time: gate_finish_time
+
+  - name: DisplaySignalUnit
+    display_name: 显示屏信号灯
+    description: 显示屏/信号灯（硬件）：发布费额与放行指示；本表无专属列，证据由抬杆与帧时间间接体现。
+    role: fact
+    properties:
+      - name: pass_record_id
+        display_name: 通行记录标识
+        data_type: string
+        required: true
+        unique: true
+        primary_key: true
+        description: 同行投影的行身份，取 vehicle_pass_record.id，用于与通行记录建立关联
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      id_column: id
+      field_mapping:
+        pass_record_id: id
+
+  - name: BillingService
+    display_name: 计费服务
+    description: 计费服务（软件）：计费请求与响应、支付与交易时间，以及应收 fee、实收 pay_fee。
+    role: fact
+    properties:
+      - name: pass_record_id
+        display_name: 通行记录标识
+        data_type: string
+        required: true
+        unique: true
+        primary_key: true
+        description: 同行投影的行身份，取 vehicle_pass_record.id，用于与通行记录建立关联
+      - name: billing_req_time
+        display_name: 计费请求时间
+        data_type: date
+        required: false
+        description: 计费请求时间（用户标注，计费服务）；调用出口计费服务的请求时间
+      - name: billing_resp_time
+        display_name: 计费响应时间
+        data_type: date
+        required: false
+        description: 计费响应时间（用户标注，计费服务）；与 billing_req_time 的差值即计费服务耗时
+      - name: pay_time
+        display_name: 支付时间
+        data_type: date
+        required: false
+        description: 支付时间（用户标注，计费服务）；扣费/支付完成时间
+      - name: trans_time
+        display_name: 交易时间
+        data_type: date
+        required: false
+        description: 交易时间（用户标注，计费服务）；交易服务上送的 transTime，用于与流水时间轴对齐
+      - name: pay_type
+        display_name: 支付类型
+        data_type: string
+        required: false
+        description: 支付类型（用户标注，计费服务），样例 5，取自 StationTransData.payType；注意其与计费方式 exitFeeType（1-OBU卡内计费 3-CPC卡内计费 4-省中心在线 5-部中心在线 6-兜底计费）不是同一字段，码表待生产字典确认
+      - name: fee
+        display_name: 费用/应收
+        data_type: int
+        required: false
+        description: 费用/应收（用户标注，计费服务），样例 4520；用户标注为应收金额，pay_fee 为实收，差额 798 与计费响应 discountFee 一致；库内单位（分/元）仍须生产字段字典确认
+      - name: pay_fee
+        display_name: 实收/支付费用
+        data_type: int
+        required: false
+        description: 实收/支付费用（用户标注，计费服务），样例 5318；用户标注为实收金额，对应的应收为 fee
+
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      id_column: id
+      field_mapping:
+        pass_record_id: id
+        billing_req_time: billing_req_time
+        billing_resp_time: billing_resp_time
+        pay_time: pay_time
+        trans_time: trans_time
+        pay_type: pay_type
+        fee: fee
+        pay_fee: pay_fee
+
+  - name: TradeService
+    display_name: 交易服务
+    description: 交易服务（软件）：ETC/CPC 交易与流水落库，含 B2-B5 耗时、CPC 耗时、完整 tolling 保存与特情码。
+    role: fact
+    properties:
+      - name: pass_record_id
+        display_name: 通行记录标识
+        data_type: string
+        required: true
+        unique: true
+        primary_key: true
+        description: 同行投影的行身份，取 vehicle_pass_record.id，用于与通行记录建立关联
+      - name: xp_time
+        display_name: B2-B5耗时
+        data_type: int
+        required: false
+        description: B2-B5 耗时（用户标注，ETC 交易服务）；即方案时间节点 C2 的交易耗时（毫秒），与 b5_frame_time − b2_frame_time 同量、elapsedTradeMs 的计算落库值，不是时间戳
+
+      - name: cpc_time
+        display_name: CPC卡交易耗时
+        data_type: int
+        required: false
+        description: CPC 卡交易耗时（用户标注，CPC 交易服务），单位毫秒；非时间戳
+
+      - name: full_tolling_save_time
+        display_name: 完整tolling保存时间
+        data_type: date
+        required: false
+        description: 完整 tolling 保存时间（用户标注，CPC 交易服务）；方案 4.1.1 的 T2 指收费站流水表接收时间，与本列是否同一口径须确认
+      - name: redis_save_time
+        display_name: Redis入库成功时间
+        data_type: date
+        required: false
+        description: Redis 入库成功时间（用户标注，ETC 交易服务）；对应流水生成落库的 T1，用于流水上传延迟分析
+      - name: error_code
+        display_name: 交易特情码
+        data_type: string
+        required: false
+        description: 交易特情码（用户标注，交易服务）；日志中同名 errorCode 常以 00 表示成功，与特情码表的口径需对齐
+      - name: batch_num
+        display_name: 批次号
+        data_type: string
+        required: false
+        description: 批次号（用户标注，交易服务/计费服务）；小班汇总 batchNum，按班次维度做流水比对时使用
+      - name: shift
+        display_name: 班次
+        data_type: string
+        required: false
+        description: 班次（用户标注，交易服务/计费服务），样例 5
+      - name: work_date
+        display_name: 工作日期
+        data_type: date
+        required: false
+        description: 工作日期（用户标注，交易服务/计费服务）；用户标注类型 DATETIME，物理列为 date，按日期粒度归一
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      id_column: id
+      field_mapping:
+        pass_record_id: id
+        xp_time: xp_time
+        cpc_time: cpc_time
+        full_tolling_save_time: full_tolling_save_time
+        redis_save_time: redis_save_time
+        error_code: error_code
+        batch_num: batch_num
+        shift: shift
+        work_date: work_date
+
+  - name: AuthorizationService
+    display_name: 授权服务
+    description: 授权服务（软件）：下发车道通行授权；本表无专属列，结果由特情码与 E1 帧间接体现。
+    role: fact
+    properties:
+      - name: pass_record_id
+        display_name: 通行记录标识
+        data_type: string
+        required: true
+        unique: true
+        primary_key: true
+        description: 同行投影的行身份，取 vehicle_pass_record.id，用于与通行记录建立关联
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      id_column: id
+      field_mapping:
+        pass_record_id: id
+
+  - name: MessageCacheService
+    display_name: 消息缓存服务
+    description: 消息缓存服务（软件）：流水消息生成与 Redis 落库，对应流水生成时间与流水ID。
+    role: fact
+    properties:
+      - name: pass_record_id
+        display_name: 通行记录标识
+        data_type: string
+        required: true
+        unique: true
+        primary_key: true
+        description: 同行投影的行身份，取 vehicle_pass_record.id，用于与通行记录建立关联
+      - name: waste_generate_time
+        display_name: 流水生成时间
+        data_type: date
+        required: false
+        description: 流水生成时间（用户标注，消息/缓存服务），与 waste_id 配套；原按"特情生成时间"理解，以本次标注为准
+
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      id_column: id
+      field_mapping:
+        pass_record_id: id
+        waste_generate_time: waste_generate_time
+
+  - name: DeviceControlService
+    display_name: 设备控制服务
+    description: 设备控制服务（软件）：B2/B4/B5/C2/C6/A1/BA/E1 帧交互与帧错误码，汇聚各设备指令。
+    role: fact
+    properties:
+      - name: pass_record_id
+        display_name: 通行记录标识
+        data_type: string
+        required: true
+        unique: true
+        primary_key: true
+        description: 同行投影的行身份，取 vehicle_pass_record.id，用于与通行记录建立关联
+      - name: b2_frame_time
+        display_name: B2帧时间
+        data_type: date
+        required: false
+        description: B2 帧时间（用户标注，设备控制服务）。RSU 与 OBU 完成信息交互后上报的关键数据帧（含 OBU 信息与交易状态），对应时间节点 C1（天线扫描到 OBU）
+      - name: b4_frame_time
+        display_name: B4帧时间
+        data_type: date
+        required: false
+        description: B4 帧时间（用户标注，设备控制服务）。OBU 内车辆信息确认帧，0015/0019/EF01/EF04 均含车牌（建议取 0015 的 vlp）
+      - name: b5_frame_time
+        display_name: B5帧时间
+        data_type: date
+        required: false
+        description: B5 帧时间（用户标注，设备控制服务）。OBU 交易成功确认帧；交易耗时 C2 = b5_frame_time − b2_frame_time（落库对应 xp_time）
+      - name: c2_frame_time
+        display_name: C2帧时间
+        data_type: date
+        required: false
+        description: C2 区间原始证据（帧到达时刻，用户标注设备控制服务）。方案 4.2 明确 C2 是 B2–B5 耗时、不是单点时间，本列只作区间起止的旁证，勿当独立时间节点
+      - name: c6_frame_time
+        display_name: C6帧时间
+        data_type: date
+        required: false
+        description: C6 帧时间（用户标注，设备控制服务）；帧类型定义未在现有依据（设备表 E1–EC、时间语义字典、实测日志）中出现，语义未确认
+      - name: a1_frame_time
+        display_name: A1帧时间
+        data_type: date
+        required: false
+        description: A1 帧时间（用户标注，设备控制服务），对应时间节点 A1（车辆压到存在线圈/车辆到达），存在线圈位置为 ETC 车道 1 号线圈、混合车道 6 号线圈。混合车道 T1 优先取值；ETC 专用车道禁用该节点
+      - name: ba_frame_time
+        display_name: BA帧时间
+        data_type: date
+        required: false
+        description: BA 帧时间（用户标注，设备控制服务）；帧类型定义未在现有依据中出现，语义未确认
+      - name: e1_frame_time
+        display_name: E1帧时间
+        data_type: date
+        required: false
+        description: E1 帧时间（用户标注，设备控制服务）。外场控制服务交易处理帧，携带 errorCode 与失败原因（样例「货车不允通行」）
+      - name: b2_errcode
+        display_name: B2错误码
+        data_type: int
+        required: false
+        description: B2 帧错误码（用户标注，设备控制服务）。本次补充属性，提供的 DDL 中尚无对应列，需确认已加列或由帧解析回填
+      - name: b4_errcode
+        display_name: B4错误码
+        data_type: int
+        required: false
+        description: B4 帧错误码（用户标注，设备控制服务）。本次补充属性，提供的 DDL 中尚无对应列，需确认已加列或由帧解析回填
+      - name: b5_errcode
+        display_name: B5错误码
+        data_type: int
+        required: false
+        description: B5 帧错误码（用户标注，设备控制服务）。本次补充属性，提供的 DDL 中尚无对应列，需确认已加列或由帧解析回填
+      - name: c2_errcode
+        display_name: C2错误码
+        data_type: int
+        required: false
+        description: C2 帧错误码（用户标注，设备控制服务）。本次补充属性，提供的 DDL 中尚无对应列，需确认已加列或由帧解析回填
+      - name: c6_errcode
+        display_name: C6错误码
+        data_type: int
+        required: false
+        description: C6 帧错误码（用户标注，设备控制服务）。本次补充属性，提供的 DDL 中尚无对应列，需确认已加列或由帧解析回填
+
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      id_column: id
+      field_mapping:
+        pass_record_id: id
+        b2_frame_time: b2_frame_time
+        b4_frame_time: b4_frame_time
+        b5_frame_time: b5_frame_time
+        c2_frame_time: c2_frame_time
+        c6_frame_time: c6_frame_time
+        a1_frame_time: a1_frame_time
+        ba_frame_time: ba_frame_time
+        e1_frame_time: e1_frame_time
+        b2_errcode: b2_errcode
+        b4_errcode: b4_errcode
+        b5_errcode: b5_errcode
+        c2_errcode: c2_errcode
+        c6_errcode: c6_errcode
+
+  - name: LaneFrontendService
+    display_name: 车道前端服务
+    description: 车道前端服务（软件）：编排一次过车的感知、计费、交易、授权与放行流程。
+    role: fact
+    properties:
+      - name: pass_record_id
+        display_name: 通行记录标识
+        data_type: string
+        required: true
+        unique: true
+        primary_key: true
+        description: 同行投影的行身份，取 vehicle_pass_record.id，用于与通行记录建立关联
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      id_column: id
+      field_mapping:
+        pass_record_id: id
+
+  - name: BusinessResult
+    display_name: 业务结果
+    description: 车辆通行过程中各环节产生的数据结果（识别/计费/交易/放行/特情/流水）。
+    role: fact
+    properties:
+      - name: id
+        display_name: 结果ID
+        data_type: string
+        required: true
+        unique: true
+        primary_key: true
+        description: 唯一标识
+      - name: record_id
+        display_name: 关联通行记录ID
+        data_type: string
+        required: true
+        description: 关联的车辆通行记录ID（VehiclePassRecord.id）
+      - name: result_type
+        display_name: 结果类型
+        data_type: string
+        required: true
+        description: 类型（识别结果/计费结果/交易结果/放行结果/特情记录/交易流水）
+      - name: result_data
+        display_name: 结果数据
+        data_type: string
+        required: false
+        description: 详细结果数据（JSON格式）
+    data_source:
+      connection_id: "highway_demo"
+      table: BUSINESS_RESULT
+      id_column: ID
+      field_mapping:
+        id: ID
+        record_id: RECORD_ID
+        result_type: RESULT_TYPE
+        result_data: RESULT_DATA
+
+  - name: BusinessRule
+    display_name: 业务规则
+    description: 对通行记录和业务结果进行校验和约束的规则。
+    role: fact
+    properties:
+      - name: id
+        display_name: 规则ID
+        data_type: string
+        required: true
+        unique: true
+        primary_key: true
+        description: 唯一标识
+      - name: name
+        display_name: 规则名称
+        data_type: string
+        required: true
+        description: 规则名称
+      - name: expression
+        display_name: 规则表达式
+        data_type: string
+        required: true
+        description: SWRL或脚本表达式
+      - name: description
+        display_name: 规则描述
+        data_type: string
+        required: false
+        description: 规则说明
+    data_source:
+      connection_id: "highway_demo"
+      table: BUSINESS_RULE
+      id_column: ID
+      field_mapping:
+        id: ID
+        name: NAME
+        expression: EXPRESSION
+        description: DESCRIPTION
+
+  - name: LogRecord
+    display_name: 日志记录
+    description: 通行记录全生命周期的留痕证据；每项结论都应可回指原始日志。
+    role: fact
+    properties:
+      - name: id
+        display_name: 日志ID
+        data_type: string
+        required: true
+        unique: true
+        primary_key: true
+        description: 唯一标识
+      - name: record_id
+        display_name: 关联通行记录ID
+        data_type: string
+        required: false
+        description: 关联的车辆通行记录ID
+      - name: result_id
+        display_name: 关联业务结果ID
+        data_type: string
+        required: false
+        description: 关联的业务结果ID
+      - name: content
+        display_name: 日志内容
+        data_type: string
+        required: true
+        description: 日志详情
+      - name: timestamp
+        display_name: 记录时间
+        data_type: date
+        required: true
+        description: 日志产生时间
+    data_source:
+      connection_id: "highway_demo"
+      table: LOG_RECORD
+      id_column: ID
+      field_mapping:
+        id: ID
+        record_id: RECORD_ID
+        result_id: RESULT_ID
+        content: CONTENT
+        timestamp: TIMESTAMP
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 关系边（29 条）：设施/车辆/介质/硬件设备/软件服务 → 过车记录，服务驱动设备与服务编排，
+#   以及原本体的业务结果/规则/日志关系。property_mappings 键=源属性、值=目标属性。
+# ═══════════════════════════════════════════════════════════════════════════
+
+link_types:
+
+  - name: vehicle_participates_pass_record
+    display_name: 车辆参与通行记录
+    description: 一辆车辆可以产生多条通行记录；本表无车辆外键，以 plate_no 关联（对象 id_column 也是 plate_no）。
+    source_type: Vehicle
+    target_type: VehiclePassRecord
+    cardinality: one-to-many
+    direction: directed
+    property_mappings: {}
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: plate_no
+      target_id_column: id
+      field_mapping: {}
+
+  - name: vehicle_has_medium
+    display_name: 车辆持有通行介质
+    description: 一辆车辆可持有/标识多个通行介质（OBU、ETC卡、CPC卡、车牌）；同为车辆下属对象，以 plate_no → media_no 关联。
+    source_type: Vehicle
+    target_type: TollMedium
+    cardinality: one-to-many
+    direction: directed
+    property_mappings: {}
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: plate_no
+      target_id_column: media_no
+      field_mapping: {}
+
+  - name: pass_record_uses_medium
+    display_name: 通行记录使用通行介质
+    description: 一条通行记录关联一个通行介质，一个介质可参与多条通行记录；以 media_no 关联。
+    source_type: TollMedium
+    target_type: VehiclePassRecord
+    cardinality: one-to-many
+    direction: directed
+    property_mappings: {}
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: media_no
+      target_id_column: id
+      field_mapping: {}
+
+  - name: station_serves_pass_record
+    display_name: 收费站产生通行记录
+    description: 收费站/门架维度与通行记录的关系（设施对象），按 station_id 关联。
+    source_type: Station
+    target_type: VehiclePassRecord
+    cardinality: one-to-many
+    direction: directed
+    property_mappings: {}
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: station_id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: lane_serves_pass_record
+    display_name: 车道产生通行记录
+    description: 收费车道维度与通行记录的关系（设施对象），按 lane_hex 关联；过车慢分组与邻道干扰分析以车道为主键。
+    source_type: Lane
+    target_type: VehiclePassRecord
+    cardinality: one-to-many
+    direction: directed
+    property_mappings: {}
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: lane_hex
+      target_id_column: id
+      field_mapping: {}
+
+  - name: detector_serves_pass_record
+    display_name: 车辆检测器支撑通行记录
+    description: 车检器 1/2/6/7 的信号与离开时间点支撑本次通行；同行投影，pass_record_id → 通行记录 id。
+    source_type: VehicleDetector
+    target_type: VehiclePassRecord
+    cardinality: one-to-one
+    direction: directed
+    property_mappings:
+      pass_record_id: id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: plate_recognition_serves_pass_record
+    display_name: 车牌识别设备支撑通行记录
+    description: 牌识设备完成抓拍与识别，给出抓拍时间 B1 与牌识车牌，是车牌比对与 T1 兜底的来源。
+    source_type: PlateRecognitionDevice
+    target_type: VehiclePassRecord
+    cardinality: one-to-one
+    direction: directed
+    property_mappings:
+      pass_record_id: id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: rsu_serves_pass_record
+    display_name: RSU读写单元支撑通行记录
+    description: RSU 与 OBU 的 B2/B4/B5 交互是交易耗时（C2/xp_time）的物理来源；本表无 RSU 编号列。
+    source_type: RsuUnit
+    target_type: VehiclePassRecord
+    cardinality: one-to-one
+    direction: directed
+    property_mappings:
+      pass_record_id: id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: barrier_gate_serves_pass_record
+    display_name: 栏杆机支撑通行记录
+    description: 栏杆机执行抬杆请求（T2）与抬杆到位（T3）上报，是放行判定与 T3-T1 耗时基线的来源。
+    source_type: BarrierGate
+    target_type: VehiclePassRecord
+    cardinality: one-to-one
+    direction: directed
+    property_mappings:
+      pass_record_id: id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: display_signal_serves_pass_record
+    display_name: 显示屏信号灯支撑通行记录
+    description: 显示屏/信号灯发布费额与放行指示；本表无专属时间列，由栏杆机与设备控制服务帧间接体现。
+    source_type: DisplaySignalUnit
+    target_type: VehiclePassRecord
+    cardinality: one-to-one
+    direction: directed
+    property_mappings:
+      pass_record_id: id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: billing_service_serves_pass_record
+    display_name: 计费服务支撑通行记录
+    description: 计费服务处理计费请求/响应并给出应收与实收（fee/pay_fee）、支付与交易时间。
+    source_type: BillingService
+    target_type: VehiclePassRecord
+    cardinality: one-to-one
+    direction: directed
+    property_mappings:
+      pass_record_id: id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: trade_service_serves_pass_record
+    display_name: 交易服务支撑通行记录
+    description: 交易服务完成 ETC/CPC 交易与流水落库，给出 B2-B5 耗时、CPC 卡耗时、完整 tolling 保存时间与交易特情码。
+    source_type: TradeService
+    target_type: VehiclePassRecord
+    cardinality: one-to-one
+    direction: directed
+    property_mappings:
+      pass_record_id: id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: authorization_service_serves_pass_record
+    display_name: 授权服务支撑通行记录
+    description: 授权服务下发车道通行授权并返回授权结果；本表无专属列，授权结果由特情码/E1 帧失败原因间接体现。
+    source_type: AuthorizationService
+    target_type: VehiclePassRecord
+    cardinality: one-to-one
+    direction: directed
+    property_mappings:
+      pass_record_id: id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: message_cache_serves_pass_record
+    display_name: 消息缓存服务支撑通行记录
+    description: 消息/缓存服务负责流水消息的生成与 Redis 落库，给出流水生成时间。
+    source_type: MessageCacheService
+    target_type: VehiclePassRecord
+    cardinality: one-to-one
+    direction: directed
+    property_mappings:
+      pass_record_id: id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: device_control_serves_pass_record
+    display_name: 设备控制服务支撑通行记录
+    description: 设备控制服务完成 B2/B4/B5/C2/C6/A1/BA/E1 帧交互并上报各帧错误码，是设备指令与帧时间点的汇聚点。
+    source_type: DeviceControlService
+    target_type: VehiclePassRecord
+    cardinality: one-to-one
+    direction: directed
+    property_mappings:
+      pass_record_id: id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: lane_frontend_serves_pass_record
+    display_name: 车道前端服务支撑通行记录
+    description: 车道前端服务（车道收费软件）编排一次过车的感知、计费、交易、授权与放行流程。
+    source_type: LaneFrontendService
+    target_type: VehiclePassRecord
+    cardinality: one-to-one
+    direction: directed
+    property_mappings:
+      pass_record_id: id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: device_control_drives_barrier_gate
+    display_name: 设备控制服务驱动栏杆机
+    description: 设备控制服务下发抬杆/落杆指令并接收到位反馈（E4010101/E4）。
+    source_type: DeviceControlService
+    target_type: BarrierGate
+    cardinality: one-to-many
+    direction: directed
+    property_mappings:
+      pass_record_id: pass_record_id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: device_control_drives_display_signal
+    display_name: 设备控制服务驱动显示屏信号灯
+    description: 设备控制服务驱动显示屏发布费额并切换信号灯放行指示。
+    source_type: DeviceControlService
+    target_type: DisplaySignalUnit
+    cardinality: one-to-many
+    direction: directed
+    property_mappings:
+      pass_record_id: pass_record_id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: device_control_manages_rsu
+    display_name: 设备控制服务管理RSU读写单元
+    description: 设备控制服务通过 RSU 与 OBU 交互（B2/B4/B5 帧）并维护天线状态。
+    source_type: DeviceControlService
+    target_type: RsuUnit
+    cardinality: one-to-many
+    direction: directed
+    property_mappings:
+      pass_record_id: pass_record_id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: lane_frontend_calls_device_control
+    display_name: 车道前端服务调用设备控制服务
+    description: 车道前端服务通过设备控制服务驱动外场设备并获取帧结果。
+    source_type: LaneFrontendService
+    target_type: DeviceControlService
+    cardinality: one-to-many
+    direction: directed
+    property_mappings:
+      pass_record_id: pass_record_id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: lane_frontend_calls_billing
+    display_name: 车道前端服务调用计费服务
+    description: 车道前端服务向计费服务发起计费请求并接收计费结果。
+    source_type: LaneFrontendService
+    target_type: BillingService
+    cardinality: one-to-many
+    direction: directed
+    property_mappings:
+      pass_record_id: pass_record_id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: lane_frontend_calls_trade
+    display_name: 车道前端服务调用交易服务
+    description: 车道前端服务发起 ETC/CPC 交易并写入流水。
+    source_type: LaneFrontendService
+    target_type: TradeService
+    cardinality: one-to-many
+    direction: directed
+    property_mappings:
+      pass_record_id: pass_record_id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: lane_frontend_requests_authorization
+    display_name: 车道前端服务请求授权服务
+    description: 车道前端服务请求通行授权，授权失败需按特情处理。
+    source_type: LaneFrontendService
+    target_type: AuthorizationService
+    cardinality: one-to-many
+    direction: directed
+    property_mappings:
+      pass_record_id: pass_record_id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: lane_frontend_publishes_message
+    display_name: 车道前端服务投递消息缓存服务
+    description: 车道前端服务将通行/交易消息投递到消息缓存服务落库。
+    source_type: LaneFrontendService
+    target_type: MessageCacheService
+    cardinality: one-to-many
+    direction: directed
+    property_mappings:
+      pass_record_id: pass_record_id
+    data_source:
+      connection_id: "highway_demo"
+      table: vehicle_pass_record
+      source_id_column: id
+      target_id_column: id
+      field_mapping: {}
+
+  - name: pass_record_generates_result
+    display_name: 通行记录产生业务结果
+    description: 一条通行记录在处理过程中产生多个业务结果（识别/计费/交易/放行/特情/流水）。
+    source_type: VehiclePassRecord
+    target_type: BusinessResult
+    cardinality: one-to-many
+    direction: directed
+    property_mappings:
+      id: record_id
+    data_source:
+      connection_id: "highway_demo"
+      table: BUSINESS_RESULT
+      source_id_column: RECORD_ID
+      target_id_column: ID
+      field_mapping: {}
+
+  - name: rule_constrains_pass_record
+    display_name: 业务规则约束通行记录
+    description: 业务规则对通行记录的处理进行校验和约束；一条记录被多条规则约束的多对多语义由规则关联表的多行表达。
+    source_type: BusinessRule
+    target_type: VehiclePassRecord
+    cardinality: one-to-many
+    direction: directed
+    property_mappings: {}
+    data_source:
+      connection_id: "highway_demo"
+      table: RULE_PASS_REL
+      source_id_column: RULE_ID
+      target_id_column: RECORD_ID
+      field_mapping: {}
+
+  - name: rule_constrains_result
+    display_name: 业务规则约束业务结果
+    description: 业务规则对识别结果、计费结果、交易结果等进行校验。
+    source_type: BusinessRule
+    target_type: BusinessResult
+    cardinality: one-to-many
+    direction: directed
+    property_mappings: {}
+    data_source:
+      connection_id: "highway_demo"
+      table: RULE_RESULT_REL
+      source_id_column: RULE_ID
+      target_id_column: RESULT_ID
+      field_mapping: {}
+
+  - name: pass_record_logs_evidence
+    display_name: 通行记录生成日志证据
+    description: 通行记录的全生命周期数据留痕为日志记录，用于结论回指与口径核对。
+    source_type: VehiclePassRecord
+    target_type: LogRecord
+    cardinality: one-to-many
+    direction: directed
+    property_mappings:
+      id: record_id
+    data_source:
+      connection_id: "highway_demo"
+      table: LOG_RECORD
+      source_id_column: RECORD_ID
+      target_id_column: ID
+      field_mapping: {}
+
+  - name: result_logs_evidence
+    display_name: 业务结果生成日志证据
+    description: 各业务结果（识别、计费、交易、放行等）留痕为日志记录。
+    source_type: BusinessResult
+    target_type: LogRecord
+    cardinality: one-to-many
+    direction: directed
+    property_mappings:
+      id: result_id
+    data_source:
+      connection_id: "highway_demo"
+      table: LOG_RECORD
+      source_id_column: RESULT_ID
+      target_id_column: ID
+      field_mapping: {}
+
+
+functions:
+  - name: calculate_toll_fee
+    display_name: 计算通行费
+    description: 基于过车记录中的出入信息、费率车型、通行介质与计费服务结果，核算应收/实收金额并给出偏差。输入取 fee（应收）、pay_fee（实收）、actual_fee_class、vehicle_type、billing_req_time/billing_resp_time。
+    implementation: java
+    script_path: highway_demo.ontology/calculate_toll_fee.java
+    input:
+      - name: passRecord
+        type: Map<String,Object>
+      - name: relatedServices
+        type: List<Map<String,Object>>
+      - name: relatedMedium
+        type: Map<String,Object>
+    output:
+      type: Map<String,Object>
+
+  - name: analyze_traffic_flow
+    display_name: 通行流量分析
+    description: 基于过车记录与业务结果，分析车道流量、特情发生率及平均通行时间；分组键为 lane_hex + vehicle_type，耗时取 elapsed_barrier_ms/elapsed_pass_ms。
+    implementation: java
+    script_path: highway_demo.ontology/analyze_traffic_flow.java
+    input:
+      - name: passRecords
+        type: List<Map<String,Object>>
+      - name: businessResults
+        type: List<Map<String,Object>>
+    output:
+      type: Map<String,Object>
+
+  - name: compute_pass_time_nodes
+    display_name: 过车时间节点与耗时计算
+    description: >
+      由过车记录计算时间节点与耗时：T1 车辆到达（混合车道取 a1_frame_time，缺失退
+      min(plate_capture_time, b2_frame_time)；ETC 专用车道取 min(plate_capture_time, b2_frame_time)）、
+      T2=gate_open_time（抬杆请求）、T3=gate_finish_time（抬杆到位）、T4=detector7_time、
+      C2=b5_frame_time−b2_frame_time（落库等价列为 xp_time）；输出 elapsedBarrierMs(T3−T1)、
+      elapsedPassMs(T4−T1)、elapsedTradeMs(C2 或 xp_time)、t3Trusted(T3−T2 ≥ a1=20ms) 与
+      缺失节点标记 MISSING(node)。口径见方案 4.2/5.2。
+    implementation: java
+    script_path: highway_demo.ontology/compute_pass_time_nodes.java
+    input:
+      - name: passRecord
+        type: Map<String,Object>
+    output:
+      type: Map<String,Object>
+
+  - name: check_flow_integrity
+    display_name: 流水完整性与上传延迟校验
+    description: >
+      校验流水关键字段完整性与上传延迟：trade_id/pass_id/waste_id 缺失分别记为无交易流水、
+      无过车标识、无流水（waste_id）；full_tolling_save_time 与 redis_save_time 之差超过
+      5 分钟记为"上传延迟流水"，并结合关联日志定位网络超时/重试/服务异常等原因。
+    implementation: java
+    script_path: highway_demo.ontology/check_flow_integrity.java
+    input:
+      - name: passRecord
+        type: Map<String,Object>
+      - name: relatedLogs
+        type: List<Map<String,Object>>
+    output:
+      type: Map<String,Object>
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 规则（函数封装）
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+rules:
+  - name: pass_record_fee_abnormal
+    display_name: 通行费异常预警
+    language: swrl
+    expr: >-
+      VehiclePassRecord(?r) ∧ calculate_toll_fee(?r, "fee_abnormal", true)
+      → has_abnormal_reason(?r, "计算出的通行费与基础费率偏差过大，可能存在计费异常")
+    output_type: warning
+  - name: pass_record_traffic_jam
+    display_name: 车道拥堵风险
+    language: swrl
+    expr: >-
+      VehiclePassRecord(?r) ∧ analyze_traffic_flow(?r, "traffic_jam", true)
+      → has_abnormal_reason(?r, "当前车道通行记录激增，可能存在拥堵风险")
+    output_type: context
+  - name: pass_record_special_event
+    display_name: 特情处理提醒
+    language: swrl
+    expr: >-
+      VehiclePassRecord(?r) ∧ has_result(?r, "特情记录")
+      → has_abnormal_reason(?r, "该通行记录包含特情，需人工介入核查")
+    output_type: warning
+  - name: pass_record_trade_failed
+    display_name: 交易失败需重新处理
+    language: swrl
+    expr: >-
+      VehiclePassRecord(?r) ∧ has_result(?r, "交易结果", "失败")
+      → has_abnormal_reason(?r, "扣费交易失败，需重新发起交易或转人工处理")
+    output_type: context
+  - name: pass_record_slow_pass
+    display_name: 过车慢判定
+    language: swrl
+    expr: >-
+      VehiclePassRecord(?r) ∧ compute_pass_time_nodes(?r, "slow_pass", true)
+      → has_abnormal_reason(?r, "T3 可信时 T3−T1 超过 b1、T3 不可信时 T4−T1 超过 b2，判定为过车慢")
+    output_type: warning
+  - name: pass_record_t3_untrusted
+    display_name: 抬杆到位不可信
+    language: swrl
+    expr: >-
+      VehiclePassRecord(?r) ∧ compute_pass_time_nodes(?r, "t3_untrusted", true)
+      → has_abnormal_reason(?r, "T3−T2 小于 a1（20ms），抬杆到位信号缺失或异常，耗时改用 T4−T1 口径")
+    output_type: context
+  - name: pass_record_time_node_missing
+    display_name: 关键时间节点缺失
+    language: swrl
+    expr: >-
+      VehiclePassRecord(?r) ∧ compute_pass_time_nodes(?r, "node_missing", true)
+      → has_abnormal_reason(?r, "T1/T2/T3/T4 中存在缺失节点，显式标记 MISSING 且不参与耗时基线样本")
+    output_type: context
+  - name: pass_record_flow_delay
+    display_name: 流水上传延迟
+    language: swrl
+    expr: >-
+      VehiclePassRecord(?r) ∧ check_flow_integrity(?r, "upload_delay", true)
+      → has_abnormal_reason(?r, "流水生成到入库（接收）超过 5 分钟，需按关联日志定位网络/重试/服务异常")
+    output_type: warning
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 口径与待确认（纯注释，不影响解析）
+# ═══════════════════════════════════════════════════════════════════════════
+# 1) 时间节点口径：A1=车辆压到存在线圈、B1=抓拍时间、C1=首个 B2 帧、C2=B5−B2（落库 xp_time）、
+#    T2=gate_open_time 抬杆请求、T3=gate_finish_time 抬杆到位（禁用 E4 回声行）、T4=车检器7。
+#    见《交易日志监测和分析系统方案设计V2.1》4.2、《本体分析方案与实例规格V1》2.2 与 5.2。
+# 2) 用户标注已消解三项旧待确认：xp_time=B2-B5 耗时（交易服务）、cpc_time=CPC 卡交易耗时、
+#    gate_open/finish=抬杆请求/到位；waste_id/waste_generate_time 按"流水ID/流水生成时间"理解，
+#    error_code 按"交易特情码"理解。
+# 3) 本表无通行方向列（入口/出口）、无入口站与入口时间；direction、EnStation/EnTime 需由站级流水
+#    或位元实体（ext_attributes）回填，方案中 laneDirection 整月为空。
+# 4) 金额：fee=费用/应收、pay_fee=实收/支付费用；本站样例 pay_fee(5318) 大于 fee(4520)，差额 798
+#    与计费响应 discountFee 一致，故库内单位（分/元）与折前折后归属仍须生产字段字典确认。
+# 5) 除 vehicle_pass_record 外，BusinessResult/BusinessRule/LogRecord 及其关系表沿用原本体定义，
+#    本次未提供其 DDL，落地时按生产库/日志源校正。
+# 6) redis_save_time 归交易服务（沿用用户标注的 ETC 交易服务口径）；若按"Redis 入库"语义应归
+#    消息缓存服务，请确认后调整（新增的 MessageCacheService 已存在）。
+# 7) 码表类取值（plate_color、media_type、pay_type、lane_type 的混合车道等取值）现有依据只覆盖
+#    本站样例值，须以生产编码表补齐；ba/c6 帧类型定义仍缺失。
+# 8) 规则头谓词 has_abnormal_reason / has_result 沿用原本体命名，未声明为 link_type 或属性，
+#    按开放词表处理；has_result 语义上等同 pass_record_generates_result 的谓词形式。
+# 9) script_path 采用「数据源 id + .ontology/」前缀 highway_demo.ontology/（沿用原本体约定），
+#    与 namespace com.highway.ontology 不是同一套命名；Java 实现尚未提供。
+# 10) 对象归属实现方式：每列由"同名物理属性"唯一归属一个对象（全文件只出现一次）；派生属性是
+#     别名映射（vehicle_id→plate_no、medium_id→media_no、entry_time→a1_frame_time、
+#     exit_time→detector7_time、total_fee→fee、status→error_code），可跨对象引用载体列。
+# 11) 硬件/软件服务对象均为归集表同行投影：主键属性 pass_record_id 映射 vehicle_pass_record.id，
+#     同一次通行的设备/服务侧取值即该行；设备实例标识（车检器编号/栏杆机编号/屏号/RSU 编号）
+#     需车道设备字典补全后才能建成独立主数据对象。
+# 12) 5 个 *_errcode（B2/B4/B5/C2/C6）为补充属性，提供的 62 列 DDL 中尚无对应列，落地前须确认
+#     是新增列还是由帧解析回填；其 field_mapping 目前指向同名占位列。
+# 13) 第 3 组已按「设施 / 硬件设备 / 软件服务」拆为独立对象：设施=收费站、收费车道；硬件=车辆检测器、
+#     车牌识别设备、RSU 读写单元、栏杆机、显示屏/信号灯；服务=计费、交易、授权、消息缓存、设备控制、
+#     车道前端。FacilityAndService、Device、SoftwareService 不再单独存在；如需"硬件设备/软件服务"
+#     基类（parent_object_types + base_type）请告知——平台上关系端点必须声明在 object_types 中，
+#     不能用基类做端点，故关系按具体类型逐一声明（共 29 条）。
+# 14) 归集表无专属列的 4 个对象：RsuUnit、DisplaySignalUnit、AuthorizationService、LaneFrontendService，
+#     目前仅含同行投影主键 pass_record_id，其证据由帧时间（设备控制服务）、特情码、抬杆时间间接体现；
+#     若补齐 RSU 编号/屏号/授权结果/前端心跳等字段，可再挂属性。
+# 15) 关系属性映射遵循平台口径「键=源属性，值=目标属性」：硬件/服务→通行记录 11 条用
+#     {pass_record_id: id}，服务→设备与服务→服务 8 条用 {pass_record_id: pass_record_id}，
+#     业务结果/日志 3 条用 {id: record_id|result_id}，共 22 条已配置；
+#     收费站/车道/车辆/介质与通行记录之间因拆分后两侧无同名列，未配置映射——需要的话可把
+#     station_id/lane_hex/plate_no/media_no 挂回聚合根，或在维度对象上加 pass_record_id 镜像属性。
+# 16) 平台导入约束（已本地镜像校验）：每个对象恰好一个 primary_key: true；对象 display_name≤42 且不含
+#     空格、description≤100；属性 name/display_name≤64、description≤1000；关系 display_name≤128；
+#     cardinality 仅 one-to-one / one-to-many / many-to-one（direction 由后端固定 directed）。
+# 17) work_date 标注为 DATETIME、物理列为 date，按日期粒度归一；axle_count 标注 TINYINT、物理列为
+#     int2，统一映射为 int。Station/Lane/Vehicle/TollMedium 的主键属性 required=false 与 DDL 可空性一致。

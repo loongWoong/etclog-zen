@@ -10,13 +10,14 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { createRenderer, createRenderLoop, detectGpu, frameInterval, mountGpuBadge } from "./render-runtime.js";
 import { COILS, DEVICES, GANTRIES, LAYOUT, buildArrowField, buildLaneSite } from "./lane-kit.js";
-import { buildVehicleModel, createBrakeController, setShadowTint, setSunDirection, axleLayout, PLATE_STYLE } from "./vehicle-models.js";
+import { buildVehicleModel, createBrakeController, createSuspensionController, setShadowTint, setSunDirection, axleLayout, PLATE_STYLE } from "./vehicle-models.js";
 import { addGroundHaze, applyRenderLook, applyShadowFlags, asphaltMaterial, createBloomPipeline, setupSky } from "./scene-look.js";
 import { buildDistantHorizon, buildScenery } from "./scenery.js";
 import { BARRIER, barrierAngleAt } from "./barrier-arm.js";
 import { buildWeathering, groundRoughness } from "./weathering.js";
 import { addContactAO } from "./contact-ao.js";
 import { addPropShadows } from "./prop-shadows.js";
+import { buildMotion, stationsFrom } from "./lane-motion.js";
 
 // 车道间距：车道现场本体横向占 -3.78(岛尾) ~ +2.65(右路肩)，相邻车道再留一条路肩间隙
 const PITCH = 7.4;
@@ -25,11 +26,14 @@ const Z_MIN = LAYOUT.zMin;
 const Z_MAX = LAYOUT.zMax;
 const FADE_MS = 20000;      // 过车结束后状态灯保持多久
 
-const DEVICE_Z = Object.fromEntries(Object.entries(DEVICES).map(([key, info]) => [key, info.z]));
-const COIL_Z = Object.fromEntries(Object.entries(COILS).map(([key, info]) => [key, info.z]));
 const RSU_Z = GANTRIES.map((item) => item.z);
 const DEVICE_COLOR = Object.fromEntries(Object.entries(DEVICES).map(([key, info]) => [key, info.color]));
 const DEVICE_LABEL = Object.fromEntries(Object.entries(DEVICES).map(([key, info]) => [key, info.label]));
+// 轨迹重建用的站点表：与 lane-kit 的现场布局同源（前端龙门架 z 取自 GANTRIES）
+const MOTION_STATIONS = stationsFrom(DEVICES, COILS, { rsuFront: RSU_Z[0] });
+// 这几类设备是"车到了它这里"的位置设备：3D 脉冲跟着重建后的到达时刻打，
+// 车在画面里经过它时它才亮（车道控制器/栏杆/费显/后台服务的脉冲仍按日志原时刻）。
+const POSITION_DEVICES = new Set(["vlpr", "weigh", "axle", "cpc", "rsu"]);
 
 // 超时判定阈值：状态进来之后迟迟不翻转，就是"卡住"了
 const TIMEOUT = {
@@ -154,9 +158,22 @@ async function boot() {
   STATE.lanes = STATE.data.lanes.filter((lane) => lane.passages.length > 0);
   for (const lane of STATE.lanes) {
     lane.rel = lane.passages.map((passage) => ({ passage, o0: passage.o0 - STATE.data.window.offsetMs, o1: passage.o1 - STATE.data.window.offsetMs }));
-    lane.tracks = new Map();
-    for (const entry of lane.rel) lane.tracks.set(entry.passage.i, buildTrack(entry.passage));
+    lane.motions = new Map();
+    for (const entry of lane.rel) {
+      // 轨迹：只用"车确实到过"的设备事件（线圈占用/牌识/称重/轴型/读卡/天线）做锚点，
+      // 顺序按日志时间，位置按设备 z；限速与入口起步在 lane-motion.js 里统一求解。
+      lane.motions.set(entry.passage.i, buildMotion({
+        events: entry.passage.nodes,
+        stations: MOTION_STATIONS,
+        windowFrom: entry.passage.o0,
+        windowTo: entry.passage.o1,
+        zMin: Z_MIN,
+        zMax: Z_MAX,
+        laneId: String(lane.id),
+      }));
+    }
     prepareSignals(lane);
+    buildSpans(lane);
   }
 
   STATE.gpu = GPU;
@@ -257,12 +274,68 @@ function prepareSignals(lane) {
   }
   ticks.sort((a, b) => a.t - b.t);
   const deviceTimes = new Map();
-  for (const tick of ticks) {
-    if (!deviceTimes.has(tick.device)) deviceTimes.set(tick.device, []);
-    deviceTimes.get(tick.device).push(tick.t);
+  const pushTime = (key, t) => {
+    if (!deviceTimes.has(key)) deviceTimes.set(key, []);
+    deviceTimes.get(key).push(Math.max(0, Math.min(span, t)));
+  };
+  // 位置类设备（牌识/称重/轴型/读卡/天线）的脉冲用"重建后的到达时刻"：
+  // 车辆画到哪个设备旁边，哪个设备才亮，和日志里的事件顺序严格对应。
+  for (const entry of lane.rel) {
+    const motion = lane.motions ? lane.motions.get(entry.passage.i) : null;
+    if (!motion) continue;
+    for (const anchor of motion.anchors) {
+      if (POSITION_DEVICES.has(anchor.key)) pushTime(anchor.key, anchor.o - STATE.data.window.offsetMs);
+    }
   }
+  for (const tick of ticks) {
+    if (POSITION_DEVICES.has(tick.device)) continue;   // 位置类已换用重建时刻
+    pushTime(tick.device, tick.t);
+  }
+  for (const list of deviceTimes.values()) list.sort((a, b) => a - b);
 
   lane.signals = { coils, barrier, ticks, deviceTimes, passageTimeouts };
+}
+
+/**
+ * 每趟过程在时间轴上真正"有车"的区间：
+ *   from = 车从入口开进来那一刻（日志起点再提前 leadMs，但不越过上一趟的结束）
+ *   to   = 日志终点；若车还在动（限速顺延 / 出口段），就延长到车真正开出去
+ * 车永远不会凭空出现在车道中间，也不会在还在动的时候被抹掉。
+ */
+function buildSpans(lane) {
+  const offset = STATE.data.window.offsetMs;
+  const spans = [];
+  let previousCarTo = 0;
+  lane.rel.forEach((entry) => {
+    const motion = lane.motions ? lane.motions.get(entry.passage.i) : null;
+    const previous = spans[spans.length - 1] || null;
+    const driveable = Boolean(motion && motion.hasEvidence);
+    const lead = driveable ? motion.leadMs : 0;
+    const from = Math.max(previous ? previous.to : 0, entry.o0 - lead, 0);
+    const to = Math.max(entry.o1, driveable ? motion.exit.o - offset : entry.o1, from + 1);
+    // 车辆区间与"过程区间"分开：
+    //   · 过程区间覆盖整条日志窗口（后台还在跑就要显示状态、超时红闪）；
+    //   · 车辆区间只覆盖"车真的在道内"的那一段（入口 → 驶离），而且不与上一趟重叠 ——
+    //     前车还没走就在入口等着（整条轨迹顺延 queueMs），绝不把起点挤到线圈6/闸机上凭空出现。
+    const naturalFrom = Math.max(0, entry.o0 - lead);
+    const carFrom = driveable ? Math.max(previousCarTo, naturalFrom) : from;
+    const queueMs = driveable ? Math.max(0, carFrom - naturalFrom) : 0;
+    const carTo = driveable
+      ? Math.min(STATE.span, Math.max(carFrom + 1, motion.exit.o - offset + queueMs))
+      : Math.min(from, to);
+    if (driveable) previousCarTo = carTo;
+    spans.push({
+      entry,
+      from: Math.min(from, to),
+      to,
+      driveable,
+      naturalFrom,
+      carFrom,
+      carTo,
+      queueMs,
+    });
+  });
+  lane.spans = spans;
 }
 
 /** 取某个时刻的状态（最后一次跳变），并判断当前所处区间是否已超时 */
@@ -608,40 +681,9 @@ function applyDetails() {
 }
 
 // ---------------------------------------------------------------------------
-// 车辆轨迹：按过程节点里的设备位置推算 z，并保证单向推进
+// 车辆轨迹：见 lane-motion.js（旧实现按节点数组顺序把 z 单调钳住，
+// 后台日志会被当成位置事件，车会停在不存在的设备上；已整体替换）
 // ---------------------------------------------------------------------------
-function buildTrack(passage) {
-  const points = [];
-  let last = -24;
-  for (const node of passage.nodes) {
-    let z = null;
-    const coilMatch = node.coil ? node.coil.match(/车检器(\d+)/) : null;
-    if (coilMatch && COIL_Z[coilMatch[1]] !== undefined) z = COIL_Z[coilMatch[1]];
-    else if (DEVICE_Z[node.device] !== undefined) z = DEVICE_Z[node.device];
-    else if (node.device === "rsu") z = last < 0 ? RSU_Z[0] : RSU_Z[1];
-    if (z === null || z < last) z = last;
-    last = z;
-    points.push({ o: node.o, z });
-  }
-  if (!points.length) points.push({ o: passage.o0, z: -24 });
-  return points;
-}
-
-function zAt(track, offsetInDay) {
-  if (offsetInDay <= track[0].o) return track[0].z;
-  const last = track[track.length - 1];
-  if (offsetInDay >= last.o) return last.z;
-  for (let index = 1; index < track.length; index += 1) {
-    const a = track[index - 1];
-    const b = track[index];
-    if (offsetInDay <= b.o) {
-      const ratio = b.o === a.o ? 1 : (offsetInDay - a.o) / (b.o - a.o);
-      return a.z + (b.z - a.z) * ratio;
-    }
-  }
-  return last.z;
-}
-
 function resultColor(result) {
   if (result === "放行") return COLORS.pass;
   if (result === "拦截") return COLORS.block;
@@ -669,7 +711,9 @@ function setLaneVehicle(model, passage) {
   model.vehiclePassage = passage.i;
   model.vehicle.userData.lastZ = null;
   model.brakeController = createBrakeController();
+  model.suspension = createSuspensionController({ maxPitchDeg: built.maxPitchDeg });
   built.setBrake(0);
+  built.setPitch(0);
   return built;
 }
 
@@ -679,22 +723,31 @@ function setLaneVehicle(model, passage) {
 function laneStateAt(lane, t) {
   let active = null;
   let recent = null;
-  for (const entry of lane.rel) {
-    if (t >= entry.o0 && t <= entry.o1) {
-      active = entry;
+  let car = null;
+  const spans = lane.spans || [];
+  for (const span of spans) {
+    if (t >= span.from && t <= span.to) {
+      active = span.entry;
+      break;
+    }
+  }
+  // 车辆：按"车真的在道内"的区间取，而不是按过程区间 —— 这样车一定从入口出发、走完驶离
+  for (const span of spans) {
+    if (span.driveable && t >= span.carFrom && t <= span.carTo) {
+      car = span;
       break;
     }
   }
   if (!active) {
-    for (let index = lane.rel.length - 1; index >= 0; index -= 1) {
-      const entry = lane.rel[index];
-      if (entry.o1 <= t && t - entry.o1 <= FADE_MS) {
-        recent = entry;
+    for (let index = spans.length - 1; index >= 0; index -= 1) {
+      const span = spans[index];
+      if (span.to <= t && t - span.to <= FADE_MS) {
+        recent = span.entry;
         break;
       }
     }
   }
-  return { active, recent };
+  return { active, recent, car };
 }
 
 function statusOf(entry, isActive) {
@@ -895,26 +948,40 @@ function updateScene(dt, now) {
     model.headStrip.material.color.setHex(color);
 
     // ---- 车辆：按本趟车的车型/轴数/真实尺寸重建，结果用悬浮标记表达 ----
-    if (state.active) {
-      const passage = state.active.passage;
-      const track = lane.tracks.get(passage.i);
+    if (state.car) {
+      const span = state.car;
+      const passage = span.entry.passage;
+      const motion = lane.motions ? lane.motions.get(passage.i) : null;
       if (model.vehiclePassage !== passage.i) {
         setLaneVehicle(model, passage);
       }
-      model.vehicle.visible = true;
-      const vehicleZ = zAt(track, t + offset);
-      const previousZ = model.vehicle.userData.lastZ;
-      model.vehicle.position.set(0, 0, vehicleZ);
-      model.vehicle.userData.lastZ = vehicleZ;
-      if (typeof previousZ === "number") {
-        const delta = vehicleZ - previousZ;
-        if (Math.abs(delta) > 1e-4) model.vehicleModel?.spin?.(delta);
-        // 刹车灯：同一趟过程内按实际位移算速度/减速度；跳变（拖拽时间游标）直接重置，避免整段闪亮
-        if (Math.abs(delta) > 2.5) model.brakeController?.reset();
-        else model.brakeController?.update(dt, delta);
-        model.vehicleModel?.setBrake?.(model.brakeController ? model.brakeController.level : 0);
+      // 只有"车确实到过">=1 个位置设备的过程才画车：整趟只有后台日志的过程不该凭空出现一辆车
+      const driveable = Boolean(motion && motion.hasEvidence);
+      model.vehicle.visible = driveable;
+      if (driveable) {
+        // queueMs：前车还没离场时，这趟车在入口等这么久（整条轨迹顺延），
+        // 于是它在自己的区间起点一定停在入口，而不是"凭空出现在线圈6/闸机上"
+        const vehicleZ = motion.zAt(t + offset - span.queueMs);
+        const previousZ = model.vehicle.userData.lastZ;
+        model.vehicle.position.set(0, 0, vehicleZ);
+        model.vehicle.userData.lastZ = vehicleZ;
+        if (typeof previousZ === "number") {
+          const delta = vehicleZ - previousZ;
+          if (Math.abs(delta) > 1e-4) model.vehicleModel?.spin?.(delta);
+          // 刹车灯 + 悬挂俯仰：同一趟过程内按实际位移算速度/减速度；
+          // 跳变（拖拽时间游标 / 换趟）直接重置，避免整段闪亮或车头猛沉
+          if (Math.abs(delta) > 2.5) {
+            model.brakeController?.reset();
+            model.suspension?.reset();
+          } else {
+            model.brakeController?.update(dt, delta);
+            model.suspension?.update(dt, delta);
+          }
+          model.vehicleModel?.setBrake?.(model.brakeController ? model.brakeController.level : 0);
+          model.vehicleModel?.setPitch?.(model.suspension ? model.suspension.pitch : 0);
+        }
+        model.vehicleMarker?.material.color.setHex(resultColor(passage.result));
       }
-      model.vehicleMarker?.material.color.setHex(resultColor(passage.result));
     } else {
       model.vehicle.visible = false;
     }
@@ -1692,11 +1759,17 @@ function enterFocus(laneId, passageI) {
   const passage = focusPassage(laneId, passageI);
   if (!lane || !passage) return;
   const offset = STATE.data.window.offsetMs;
+  const entry = lane.rel.find((item) => item.passage.i === passage.i);
+  const span = lane.spans ? lane.spans.find((item) => item.entry === entry) : null;
+  // 回放从"车还在入口"开始（车辆区间起点），走到车真的驶离为止 ——
+  // 不是从日志窗口起点开始（那时车早就在道中间了）
   STATE.focus = {
     laneId,
     passageI: passage.i,
-    from: Math.max(0, passage.o0 - offset),
-    to: Math.min(STATE.span, passage.o1 - offset),
+    from: span ? span.carFrom : Math.max(0, passage.o0 - offset),
+    to: span
+      ? Math.min(STATE.span, Math.max(span.carTo, span.carFrom + 1))
+      : Math.min(STATE.span, passage.o1 - offset),
   };
   document.body.classList.add("single-lane");
   STATE.lanes.forEach((item) => {
@@ -1899,7 +1972,13 @@ function selectPassage(lane, passage) {
   document.querySelectorAll(".swim-track .bar.sel").forEach((bar) => bar.classList.remove("sel"));
   document.querySelector(`.bar[data-key="${lane.id}#${passage.i}"]`)?.classList.add("sel");
   selectLane(lane.id);
-  STATE.t = Math.max(0, passage.o0 - STATE.data.window.offsetMs);
+  // 游标停在本趟"车还在入口"的时刻（车辆区间起点）：一进来就看到车从入口驶入，
+  // 而不是日志窗口起点（那时车已经在道中间了）
+  const rel = lane.rel ? lane.rel.find((item) => item.passage.i === passage.i) : null;
+  const span = rel && lane.spans ? lane.spans.find((item) => item.entry === rel) : null;
+  STATE.t = Math.max(0, span && span.driveable
+    ? span.carFrom
+    : passage.o0 - STATE.data.window.offsetMs);
   STATE.playing = false;
   dom.playBtn.textContent = "播放";
   renderDetail();
@@ -1913,6 +1992,21 @@ function renderDetail() {
   const focused = Boolean(STATE.focus && STATE.focus.laneId === lane.id && STATE.focus.passageI === passage.i);
   const solo = soloLogFor(passage);
   const passageTimeout = lane.signals.passageTimeouts.has(passage.i);
+  // 车辆渲染区间：车从入口驶入（不是凭空出现在道中间）。前一趟还没离场时，
+  // 这趟车在入口等（整条轨迹顺延）—— 等多久、被谁挡住，如实写出来。
+  const relEntry = lane.rel ? lane.rel.find((item) => item.passage.i === passage.i) : null;
+  const span = relEntry && lane.spans ? lane.spans.find((item) => item.entry === relEntry) : null;
+  const queueChip = span && span.queueMs > 50
+    ? (() => {
+        const index = lane.spans.findIndex((item) => item === span);
+        const before = index > 0 ? lane.spans[index - 1] : null;
+        const who = before && before.driveable ? `#${before.entry.passage.i}` : "前一趟";
+        return `<span class="chip">入口等 ${who} 离场 ${(span.queueMs / 1000).toFixed(1)}s</span>`;
+      })()
+    : "";
+  const carChip = span && span.driveable
+    ? `<span class="chip">车辆区间 ${((span.carTo - span.carFrom) / 1000).toFixed(1)}s（入口驶入 → 驶离）</span>`
+    : `<span class="chip">无位置证据（不画车）</span>`;
   const chips = [
     `<span class="chip ${passage.result === "放行" ? "pass" : passage.result === "拦截" ? "block" : passage.result === "混合" ? "mixed" : ""}">${passage.result}</span>`,
     `<span class="chip">分段依据 ${passage.basis}</span>`,
@@ -1923,6 +2017,8 @@ function renderDetail() {
     passage.coilIds.length ? `<span class="chip">线圈 ${passage.coilIds.join("/")}</span>` : "",
     passage.plates.length ? `<span class="chip">车牌 ${passage.plates.join(" ")}</span>` : `<span class="chip">无车牌</span>`,
     passage.anomalies.length ? `<span class="chip block">异常 ${passage.anomalies.join(" ")}</span>` : "",
+    carChip,
+    queueChip,
   ].join("");
 
   const maxNodes = 60;
@@ -1971,6 +2067,21 @@ function renderDetail() {
     .filter(Boolean)
     .join(" · ");
 
+  // 轨迹重建的交代：哪些节点被当成位置证据、哪些被剔掉、车被限速顺延了多少
+  const motion = lane.motions ? lane.motions.get(passage.i) : null;
+  const trace = motion
+    ? motion.hasEvidence
+      ? [
+          `位置锚点 ${motion.diagnostics.anchorCount} 个（${motion.anchors.map((anchor) => `${anchor.key}@${formatClock(anchor.o - STATE.data.window.offsetMs)}${anchor.o - anchor.logO > 100 ? `(+${((anchor.o - anchor.logO) / 1000).toFixed(1)}s)` : ""}`).slice(0, 4).join("，")}${motion.anchors.length > 4 ? " …" : ""}）`,
+          `按日志顺序剔除 ${motion.diagnostics.droppedCount} 个位置冲突节点`,
+          `非位置日志 ${motion.diagnostics.rejected} 条（后台服务/流水/异常/别的车道…）`,
+          `入口提前 ${(motion.leadMs / 1000).toFixed(1)}s 起步`,
+          `最大顺延 ${(motion.diagnostics.maxDelayMs / 1000).toFixed(1)}s（车道限速 60km/h）`,
+          `线圈占用 ${motion.diagnostics.coilWindows} 段，覆盖不上 ${motion.diagnostics.coilUncovered} 段`,
+        ].join(" · ")
+      : "本趟没有任何位置事件（全是后台日志）→ 不画车"
+    : "无轨迹数据";
+
   dom.detail.innerHTML = `
     <div class="detail-head">${lane.id} · ${passage.start} → ${passage.end}</div>
     <div class="detail-chips">${chips}</div>
@@ -1983,6 +2094,7 @@ function renderDetail() {
       }
     </div>
     <div class="steps">设备序列：${passage.devices.join(" → ") || "-"}${passage.nodes.length > maxNodes ? `（展示前 ${maxNodes} / ${passage.nodes.length} 个节点）` : ""}</div>
+    <div class="steps dim">轨迹重建：${trace}</div>
     <h3 class="mini">该时间点的设备状态</h3>
     <ul class="state-lines">${stateLines.join("")}</ul>
     <div class="steps dim">最后一次活动：${deviceTail || "-"}</div>
@@ -2255,10 +2367,36 @@ function roundRect(ctx, x, y, width, height, radius) {
 // ---------------------------------------------------------------------------
 // 只读调试句柄：给无头验证/现场排查用，不参与任何渲染逻辑
 // ---------------------------------------------------------------------------
+/** 当前画出来的车在哪 + 悬挂/刹车灯状态（自检用：核对"车在设备旁边""刹车时车头低下去"）。 */
+function collectVehicleState() {
+  const out = [];
+  STATE.models.forEach((model, laneId) => {
+    if (!model.vehicle.visible) return;
+    const lane = STATE.lanes.find((item) => item.id === laneId);
+    const state = lane ? STATE.laneStates.get(laneId) : null;
+    const entry = state && state.car
+      ? state.car.entry
+      : (state && state.active ? state.active : null);
+    const passage = entry ? entry.passage : null;
+    const motion = passage && lane.motions ? lane.motions.get(passage.i) : null;
+    out.push({
+      laneId,
+      passage: passage ? passage.i : null,
+      z: Math.round(model.vehicle.position.z * 1000) / 1000,
+      hasEvidence: Boolean(motion && motion.hasEvidence),
+      pitchDeg: model.suspension ? Math.round((model.suspension.pitch * 180) / Math.PI * 1000) / 1000 : 0,
+      maxPitchDeg: model.vehicleModel && model.vehicleModel.maxPitchDeg ? Math.round(model.vehicleModel.maxPitchDeg * 1000) / 1000 : 0,
+      accel: model.suspension ? Math.round(model.suspension.accel * 1000) / 1000 : 0,
+      speed: model.suspension ? Math.round(model.suspension.speed * 1000) / 1000 : 0,
+      brake: model.brakeController ? Math.round(model.brakeController.level * 1000) / 1000 : 0,
+    });
+  });
+  return out;
+}
+
 window.__LANES__ = {
   STATE,
-  LOOP,
-  seek(t) {
+  LOOP,  seek(t) {
     STATE.t = Math.max(0, Math.min(STATE.span, Number(t) || 0));
     LOOP.hold(400);
   },
@@ -2268,6 +2406,35 @@ window.__LANES__ = {
     if (dom.detailToggle) dom.detailToggle.checked = STATE.showDetails;
     applyDetails();
     return STATE.contactAO ? STATE.contactAO.count : null;
+  },
+  /**
+   * 自检用：每趟车的可见区间 —— 车是不是从入口起步、区间有没有被前一趟挤掉、
+   * 有没有一直开到场外（z > 可行驶区）。
+   */
+  spanSummary() {
+    const offset = STATE.data.window.offsetMs;
+    const out = [];
+    for (const lane of STATE.lanes) {
+      for (const span of lane.spans || []) {
+        if (!span.driveable) continue;
+        const motion = lane.motions ? lane.motions.get(span.entry.passage.i) : null;
+        if (!motion) continue;
+        const evalAt = (t) => Math.round(motion.zAt(t + offset - span.queueMs) * 1000) / 1000;
+        out.push({
+          laneId: lane.id,
+          passage: span.entry.passage.i,
+          carFrom: Math.round(span.carFrom),
+          carTo: Math.round(span.carTo),
+          queueMs: Math.round(span.queueMs),
+          anchorCount: motion.diagnostics.anchorCount,
+          startZ: evalAt(span.carFrom),
+          entryZ: Math.round(motion.zAt(motion.entry.o) * 1000) / 1000,
+          endZ: evalAt(span.carTo),
+          spanMs: Math.round(span.carTo - span.carFrom),
+        });
+      }
+    }
+    return out;
   },
   /** 自检用：某条车道此刻的栏杆姿态 —— 直接用场景里的真实对象量（不重算一遍公式）。 */
   barrierPose(laneId) {
@@ -2328,6 +2495,130 @@ window.__LANES__ = {
       passageTimeouts: [...lane.signals.passageTimeouts],
       ticks: lane.signals.ticks.length,
     };
+  },
+  /** 轨迹自检：锚点是否真落在设备位置上、是否单调推进、是否从入口起步（页面里实测） */
+  trajectory(laneId, passageI) {
+    const lane = STATE.lanes.find((item) => item.id === laneId);
+    if (!lane || !lane.motions) return null;
+    const motion = lane.motions.get(passageI);
+    if (!motion) return null;
+    const offset = STATE.data.window.offsetMs;
+    // 车辆区间的"入口等待"：前一趟还在道内时这趟车在入口等，整条轨迹顺延 queueMs，
+    // 所以"车到设备旁边"的时刻是 tPage + queueMs（自检必须按这个时刻核对，不然会误判）。
+    const rel = lane.rel ? lane.rel.find((item) => item.passage.i === passageI) : null;
+    const span = rel && lane.spans ? lane.spans.find((item) => item.entry === rel) : null;
+    const queueMs = span ? Math.round(span.queueMs) : 0;
+    return {
+      laneId,
+      passage: passageI,
+      hasEvidence: motion.hasEvidence,
+      leadMs: Math.round(motion.leadMs),
+      queueMs,
+      carFrom: span ? Math.round(span.carFrom) : null,
+      carTo: span ? Math.round(span.carTo) : null,
+      entry: { z: motion.entry.z, t: Math.round(motion.entry.o) },
+      exit: { z: motion.exit.z, t: Math.round(motion.exit.o) },
+      anchors: motion.anchors.map((anchor) => ({
+        key: anchor.key,
+        z: anchor.z,
+        t: Math.round(anchor.o),
+        tPage: Math.round(anchor.o - offset),
+        logT: Math.round(anchor.logO),
+        delayMs: Math.round(anchor.o - anchor.logO),
+        why: anchor.why,
+        zHere: Math.round(motion.zAt(anchor.o) * 1000) / 1000,
+      })),
+      dropped: motion.dropped.map((item) => ({ key: item.key, z: item.z, t: Math.round(item.o), why: item.why })),
+      coilWindows: motion.coilWindows.map((window) => ({
+        key: window.key, z: window.z, t0: Math.round(window.t0), t1: Math.round(window.t1),
+        stuck: Boolean(window.stuck), merged: window.merged, stop: Boolean(window.stop),
+      })),
+      diagnostics: motion.diagnostics,
+    };
+  },
+  /** 当前画出来的车在哪（核对"车在设备旁边"而不是"车停在入口"） */
+  vehicleState() {
+    return collectVehicleState();
+  },
+  /**
+   * 自检用：以固定步长"真的播一段"（走的还是 onFrame 那条路径，与 RAF 真实帧率无关），
+   * 返回逐帧的车辆 z / 悬挂俯仰 / 刹车灯。量运动学量必须连续播放 —— seek 是跳变，会被当成急刹而 reset。
+   */
+  playFrames(frames = 60, stepMs = 33, speed = 1) {
+    const keepPlaying = STATE.playing;
+    const keepSpeed = STATE.speed;
+    STATE.playing = true;
+    STATE.speed = speed;
+    const samples = [];
+    for (let i = 0; i < frames; i += 1) {
+      onFrame(stepMs / 1000, performance.now());
+      const rows = collectVehicleState();
+      samples.push({ t: Math.round(STATE.t), cars: rows });
+    }
+    STATE.playing = keepPlaying;
+    STATE.speed = keepSpeed;
+    LOOP.hold(400);
+    return samples;
+  },
+  /** 一次把 103 趟过程全量核对一遍（锚点命中、单调、限速、入口起步、线圈覆盖） */
+  trajectorySummary() {
+    const offset = STATE.data.window.offsetMs;
+    const summary = {
+      passages: 0, withEvidence: 0, noEvidence: 0, anchors: 0, dropped: 0, rejected: 0,
+      anchorMiss: 0, anchorMissMax: 0, backwards: 0, overspeed: 0, peak: 0, peakLimit: 16.7,
+      entryWrong: 0, leads: [], delays: [], coilWindows: 0, coilUncovered: 0, stuckCoils: 0,
+      speedBudgets: [], perPassage: [],
+    };
+    for (const lane of STATE.lanes) {
+      for (const entry of lane.rel) {
+        const motion = lane.motions.get(entry.passage.i);
+        summary.passages += 1;
+        if (!motion || !motion.hasEvidence) {
+          summary.noEvidence += 1;
+          summary.perPassage.push({ laneId: lane.id, passage: entry.passage.i, anchors: 0, hasEvidence: false });
+          continue;
+        }
+        const d = motion.diagnostics;
+        summary.withEvidence += 1;
+        summary.anchors += d.anchorCount;
+        summary.dropped += d.droppedCount;
+        summary.rejected += d.rejected;
+        summary.backwards += d.backwards;
+        summary.peak = Math.max(summary.peak, d.peakSpeed);
+        summary.speedBudgets.push(d.speedBudget);
+        summary.leads.push(motion.leadMs);
+        summary.coilWindows += d.coilWindows;
+        summary.coilUncovered += d.coilUncovered;
+        for (const anchor of motion.anchors) {
+          const miss = Math.abs(motion.zAt(anchor.o) - anchor.z);
+          if (miss > 1e-6) summary.anchorMiss += 1;
+          summary.anchorMissMax = Math.max(summary.anchorMissMax, miss);
+          summary.delays.push(anchor.o - anchor.logO);
+        }
+        const entryZ = motion.zAt(motion.entry.o);
+        if (Math.abs(entryZ - motion.entry.z) > 1e-6 || entryZ > Z_MIN + 4) summary.entryWrong += 1;
+        if (d.peakSpeed > summary.peakLimit) summary.overspeed += 1;
+        summary.perPassage.push({
+          laneId: lane.id,
+          passage: entry.passage.i,
+          anchors: d.anchorCount,
+          dropped: d.droppedCount,
+          hasEvidence: true,
+          leadMs: Math.round(motion.leadMs),
+          maxDelayMs: d.maxDelayMs,
+          peakSpeed: d.peakSpeed,
+          coilUncovered: d.coilUncovered,
+        });
+      }
+    }
+    const median = (list) => (list.length ? list.slice().sort((a, b) => a - b)[list.length >> 1] : 0);
+    summary.leadMedian = Math.round(median(summary.leads));
+    summary.leadMax = Math.round(summary.leads.length ? Math.max(...summary.leads) : 0);
+    summary.delayMedian = Math.round(median(summary.delays));
+    summary.delayMax = Math.round(summary.delays.length ? Math.max(...summary.delays) : 0);
+    summary.speedBudgetMedian = Number((median(summary.speedBudgets) || 0).toFixed(2));
+    summary.offsetMs = offset;
+    return summary;
   },
   // ---- 交互：车道高亮 / 拦截超时清单 / 单车道下钻（自检用） ----
   selectLane(laneId) {

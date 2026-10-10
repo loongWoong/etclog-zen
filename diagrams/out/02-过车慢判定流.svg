@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1388.00" height="1589.00" viewBox="0 0 1388.00 1589.00" aria-label="过车慢判定流：口径分支 b1/b2 + 三子模型根因" font-family="&quot;Microsoft YaHei&quot;, &quot;PingFang SC&quot;, &quot;Noto Sans CJK SC&quot;, ui-sans-serif, system-ui, sans-serif">
+  <rect x="0.00" y="0.00" width="1388.00" height="1589.00" rx="0.00" fill="#ffffff" stroke="none" />
+  <g data-shape="node">
+    <path d="M 606.00 27.00 A 10.00 10.00 0 0 1 616.00 17.00 L 918.00 17.00 A 10.00 10.00 0 0 1 928.00 27.00 L 928.00 61.00 A 10.00 10.00 0 0 1 918.00 71.00 L 616.00 71.00 A 10.00 10.00 0 0 1 606.00 61.00 L 606.00 27.00 Z" fill="#f59e0b" stroke="#d97706" stroke-width="1.5" />
+    <text x="767.00" y="40.40" fill="#451a03" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">一次通行 Passage</text>
+    <text x="767.00" y="56.00" fill="#451a03" font-family="inherit" font-size="11" opacity="0.7" text-anchor="middle">ETC 出口交易成功 · 车道 370164335B（91 车道）</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 563.00 170.00 A 10.00 10.00 0 0 1 573.00 160.00 L 961.00 160.00 A 10.00 10.00 0 0 1 971.00 170.00 L 971.00 238.00 A 10.00 10.00 0 0 1 961.00 248.00 L 573.00 248.00 A 10.00 10.00 0 0 1 563.00 238.00 L 563.00 170.00 Z" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.5" />
+    <text x="573.00" y="184.20" fill="#1e3a8a" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="600.00">抽取六个时间节点</tspan><tspan font-weight="400.00">（口径先于规则）</tspan></text>
+    <text x="573.00" y="200.40" fill="#1e3a8a" font-family="inherit" font-size="13">A1 压线圈 · B1 抓拍上报 · C1 首个 B2 帧</text>
+    <text x="573.00" y="216.70" fill="#1e3a8a" font-family="inherit" font-size="13">T2 抬杆指令 · T3 到位（barStaus=01）· T4 通过线圈</text>
+    <text x="573.00" y="232.90" fill="#1e3a8a" font-family="inherit" font-size="13">T1 = ETC 专用 min(B1,C1)；混合车道 A1 优先</text>
+  </g>
+  <g data-form="diamond" data-shape="node">
+    <path d="M 764.65 341.07 A 10.00 10.00 0 0 1 769.35 341.07 L 947.85 384.28 A 10.00 10.00 0 0 1 947.85 403.72 L 769.35 446.93 A 10.00 10.00 0 0 1 764.65 446.93 L 586.15 403.72 A 10.00 10.00 0 0 1 586.15 384.28 L 764.65 341.07 Z" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.5" />
+    <text x="767.00" y="390.40" fill="#4c1d95" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">T3 可信?</text>
+    <text x="767.00" y="406.00" fill="#4c1d95" font-family="inherit" font-size="11" opacity="0.7" text-anchor="middle">T3 − T2 ≥ 20ms 且 C1 ≤ T2 ≤ T3</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 183.00 577.00 A 10.00 10.00 0 0 1 193.00 567.00 L 381.00 567.00 A 10.00 10.00 0 0 1 391.00 577.00 L 391.00 611.00 A 10.00 10.00 0 0 1 381.00 621.00 L 193.00 621.00 A 10.00 10.00 0 0 1 183.00 611.00 L 183.00 577.00 Z" fill="#d1fae5" stroke="#047857" stroke-width="1.5" />
+    <text x="287.00" y="590.40" fill="#064e3b" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">b1：T3 − T1 &gt; 阈值</text>
+    <text x="287.00" y="606.00" fill="#064e3b" font-family="inherit" font-size="11" opacity="0.7" text-anchor="middle">方案 b1 · 冷启动客车/货车 2s</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 1123.00 577.00 A 10.00 10.00 0 0 1 1133.00 567.00 L 1361.00 567.00 A 10.00 10.00 0 0 1 1371.00 577.00 L 1371.00 611.00 A 10.00 10.00 0 0 1 1361.00 621.00 L 1133.00 621.00 A 10.00 10.00 0 0 1 1123.00 611.00 L 1123.00 577.00 Z" fill="#fef3c7" stroke="#d97706" stroke-width="1.5" />
+    <text x="1247.00" y="590.40" fill="#78350f" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">b2：T4 − T1 &gt; 阈值</text>
+    <text x="1247.00" y="606.00" fill="#78350f" font-family="inherit" font-size="11" opacity="0.7" text-anchor="middle">方案 b2 · 冷启动客车 5s / 货车 15s</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 554.00 730.00 A 10.00 10.00 0 0 1 564.00 720.00 L 970.00 720.00 A 10.00 10.00 0 0 1 980.00 730.00 L 980.00 798.00 A 10.00 10.00 0 0 1 970.00 808.00 L 564.00 808.00 A 10.00 10.00 0 0 1 554.00 798.00 L 554.00 730.00 Z" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.5" />
+    <text x="564.00" y="744.20" fill="#4c1d95" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="600.00">动态基线 median + k×MAD</tspan><tspan font-weight="400.00">（k=7）</tspan></text>
+    <text x="564.00" y="760.40" fill="#4c1d95" font-family="inherit" font-size="13">分组 = (车道 × 车型)：7 条收费车道 × 客车/货车</text>
+    <text x="564.00" y="776.70" fill="#4c1d95" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="400.00">窗口 = 最近 7 个</tspan><tspan font-weight="600.00">有数据日</tspan><tspan font-weight="400.00">（07-03~12 等 16 天无数据）</tspan></text>
+    <text x="564.00" y="792.90" fill="#4c1d95" font-family="inherit" font-size="13">样本保护：组样本 &lt;30 → 沿用上期 → 冷启动值</text>
+  </g>
+  <g data-form="diamond" data-shape="node">
+    <path d="M 764.94 870.93 A 10.00 10.00 0 0 1 769.06 870.93 L 974.95 914.21 A 10.00 10.00 0 0 1 974.95 933.79 L 769.06 977.07 A 10.00 10.00 0 0 1 764.94 977.07 L 559.05 933.79 A 10.00 10.00 0 0 1 559.05 914.21 L 764.94 870.93 Z" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.5" />
+    <text x="767.00" y="920.40" fill="#4c1d95" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">超阈值?</text>
+    <text x="767.00" y="936.00" fill="#4c1d95" font-family="inherit" font-size="11" opacity="0.7" text-anchor="middle">剔除：倒车 / 闯关 / 节点缺失 / &gt;15s</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 76.50 907.00 A 10.00 10.00 0 0 1 86.50 897.00 L 207.50 897.00 A 10.00 10.00 0 0 1 217.50 907.00 L 217.50 941.00 A 10.00 10.00 0 0 1 207.50 951.00 L 86.50 951.00 A 10.00 10.00 0 0 1 76.50 941.00 L 76.50 907.00 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="147.00" y="920.40" fill="#0f172a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">正常通行</text>
+    <text x="147.00" y="936.00" fill="#0f172a" font-family="inherit" font-size="11" opacity="0.7" text-anchor="middle">入台账并作基线样本</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 693.00 1047.00 A 10.00 10.00 0 0 1 703.00 1037.00 L 831.00 1037.00 A 10.00 10.00 0 0 1 841.00 1047.00 L 841.00 1081.00 A 10.00 10.00 0 0 1 831.00 1091.00 L 703.00 1091.00 A 10.00 10.00 0 0 1 693.00 1081.00 L 693.00 1047.00 Z" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.5" />
+    <text x="767.00" y="1060.40" fill="#1e3a8a" font-family="inherit" font-size="13" font-weight="600" text-anchor="middle">根因定位</text>
+    <text x="767.00" y="1076.00" fill="#1e3a8a" font-family="inherit" font-size="11" opacity="0.7" text-anchor="middle">三子模型 · 依次判定</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 215.50 1190.00 A 10.00 10.00 0 0 1 225.50 1180.00 L 368.50 1180.00 A 10.00 10.00 0 0 1 378.50 1190.00 L 378.50 1258.00 A 10.00 10.00 0 0 1 368.50 1268.00 L 225.50 1268.00 A 10.00 10.00 0 0 1 215.50 1258.00 L 215.50 1190.00 Z" fill="#ffffff" stroke="#fda4af" stroke-width="1.5" />
+    <text x="225.50" y="1204.20" fill="#881337" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="600.00">天线扫描慢</tspan></text>
+    <text x="225.50" y="1220.40" fill="#881337" font-family="inherit" font-size="13">ETC：C1 − B1 &gt; c1</text>
+    <text x="225.50" y="1236.70" fill="#881337" font-family="inherit" font-size="13">混合：C1 − A1 &gt; c1</text>
+    <text x="225.50" y="1252.90" fill="#881337" font-family="inherit" font-size="13">负数 → 不计样本</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 665.50 1198.50 A 10.00 10.00 0 0 1 675.50 1188.50 L 858.50 1188.50 A 10.00 10.00 0 0 1 868.50 1198.50 L 868.50 1249.50 A 10.00 10.00 0 0 1 858.50 1259.50 L 675.50 1259.50 A 10.00 10.00 0 0 1 665.50 1249.50 L 665.50 1198.50 Z" fill="#ffffff" stroke="#fda4af" stroke-width="1.5" />
+    <text x="675.50" y="1212.30" fill="#881337" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="600.00">栏杆抬杆慢</tspan></text>
+    <text x="675.50" y="1228.60" fill="#881337" font-family="inherit" font-size="13">T3 − T2 &gt; a2（500ms）</text>
+    <text x="675.50" y="1244.80" fill="#881337" font-family="inherit" font-size="13">或 T4 − T2 &gt; a3（1.5s）</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 1135.50 1198.50 A 10.00 10.00 0 0 1 1145.50 1188.50 L 1328.50 1188.50 A 10.00 10.00 0 0 1 1338.50 1198.50 L 1338.50 1249.50 A 10.00 10.00 0 0 1 1328.50 1259.50 L 1145.50 1259.50 A 10.00 10.00 0 0 1 1135.50 1249.50 L 1135.50 1198.50 Z" fill="#ffffff" stroke="#fda4af" stroke-width="1.5" />
+    <text x="1145.50" y="1212.30" fill="#881337" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="600.00">交易慢</tspan></text>
+    <text x="1145.50" y="1228.60" fill="#881337" font-family="inherit" font-size="13">C2 = 首个 B5 − 首个 B2</text>
+    <text x="1145.50" y="1244.80" fill="#881337" font-family="inherit" font-size="13">C2 &gt; d1（冷启动 500ms）</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 511.50 1368.50 A 10.00 10.00 0 0 1 521.50 1358.50 L 1012.50 1358.50 A 10.00 10.00 0 0 1 1022.50 1368.50 L 1022.50 1419.50 A 10.00 10.00 0 0 1 1012.50 1429.50 L 521.50 1429.50 A 10.00 10.00 0 0 1 511.50 1419.50 L 511.50 1368.50 Z" fill="#f59e0b" stroke="#d97706" stroke-width="1.5" />
+    <text x="521.50" y="1382.30" fill="#451a03" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="600.00">Anomaly 异常实例</tspan><tspan font-weight="400.00">：过车慢</tspan></text>
+    <text x="521.50" y="1398.60" fill="#451a03" font-family="inherit" font-size="13">实测值 + 阈值 + 来源（冷启动/动态）+ 根因</text>
+    <text x="521.50" y="1414.80" fill="#451a03" font-family="inherit" font-size="13">证据指针（ES _id + 口径）· verdict：已证实 / 规则推断 / 待核实</text>
+  </g>
+  <g data-shape="edge">
+    <path d="M 767.00 71.00 L 767.00 153.00" fill="none" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 767.00 160.00 L 763.85 153.00 L 770.15 153.00 Z" fill="#64748b" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 767.00 248.00 L 767.00 333.50" fill="none" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 767.00 340.50 L 763.85 333.50 L 770.15 333.50 Z" fill="#64748b" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 546.00 394.00 L 297.00 394.00 A 10.00 10.00 0 0 0 287.00 404.00 L 287.00 560.00" fill="none" stroke="#6ee7b7" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 287.00 567.00 L 283.85 560.00 L 290.15 560.00 Z" fill="#6ee7b7" stroke="#6ee7b7" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 988.00 394.00 L 1237.00 394.00 A 10.00 10.00 0 0 1 1247.00 404.00 L 1247.00 560.00" fill="none" stroke="#fcd34d" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 1247.00 567.00 L 1243.85 560.00 L 1250.15 560.00 Z" fill="#fcd34d" stroke="#fcd34d" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 391.00 594.00 L 671.80 594.00 A 10.00 10.00 0 0 1 681.80 604.00 L 681.80 713.00" fill="none" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 681.80 720.00 L 678.65 713.00 L 684.95 713.00 Z" fill="#64748b" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 1123.00 594.00 L 862.20 594.00 A 10.00 10.00 0 0 0 852.20 604.00 L 852.20 713.00" fill="none" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 852.20 720.00 L 849.05 713.00 L 855.35 713.00 Z" fill="#64748b" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 767.00 808.00 L 767.00 863.50" fill="none" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 767.00 870.50 L 763.85 863.50 L 770.15 863.50 Z" fill="#64748b" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 512.50 924.00 L 224.50 924.00" fill="none" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 217.50 924.00 L 224.50 920.85 L 224.50 927.15 Z" fill="#64748b" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 767.00 977.50 L 767.00 1030.00" fill="none" stroke="#fda4af" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 767.00 1037.00 L 763.85 1030.00 L 770.15 1030.00 Z" fill="#fda4af" stroke="#fda4af" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 722.60 1091.00 L 722.60 1125.50 A 10.00 10.00 0 0 1 712.60 1135.50 L 307.00 1135.50 A 10.00 10.00 0 0 0 297.00 1145.50 L 297.00 1173.00" fill="none" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 297.00 1180.00 L 293.85 1173.00 L 300.15 1173.00 Z" fill="#64748b" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 767.00 1091.00 L 767.00 1181.50" fill="none" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 767.00 1188.50 L 763.85 1181.50 L 770.15 1181.50 Z" fill="#64748b" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 811.40 1091.00 L 811.40 1129.80 A 10.00 10.00 0 0 0 821.40 1139.80 L 1227.00 1139.80 A 10.00 10.00 0 0 1 1237.00 1149.80 L 1237.00 1181.50" fill="none" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 1237.00 1188.50 L 1233.85 1181.50 L 1240.15 1181.50 Z" fill="#64748b" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 297.00 1268.00 L 297.00 1303.30 A 10.00 10.00 0 0 0 307.00 1313.30 L 654.80 1313.30 A 10.00 10.00 0 0 1 664.80 1323.30 L 664.80 1351.50" fill="none" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 664.80 1358.50 L 661.65 1351.50 L 667.95 1351.50 Z" fill="#64748b" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 767.00 1259.50 L 767.00 1351.50" fill="none" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 767.00 1358.50 L 763.85 1351.50 L 770.15 1351.50 Z" fill="#64748b" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 1237.00 1259.50 L 1237.00 1299.00 A 10.00 10.00 0 0 1 1227.00 1309.00 L 879.20 1309.00 A 10.00 10.00 0 0 0 869.20 1319.00 L 869.20 1351.50" fill="none" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 869.20 1358.50 L 866.05 1351.50 L 872.35 1351.50 Z" fill="#64748b" stroke="#64748b" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <text x="17.00" y="1537.90" fill="#b42318" font-family="inherit" font-size="11">口径回归用例 R1：同一趟（鲁UG6595）上报口径 538ms → 正常；改用报文内 picTime 则 2312ms → 过车慢 + 天线扫描慢。标 B1_LOW 才算说清。</text>
+  <text x="17.00" y="1567.90" fill="#b42318" font-family="inherit" font-size="11">陷阱：设备信息|E4 的「电动栏杆机抬杆到位」时间与 T2 指令同毫秒，取它会把 T3−T2 变成 0ms → 误判 T3 不可信 → 整趟换口径。T3 只认 barStaus=01 帧。</text>
+</svg>

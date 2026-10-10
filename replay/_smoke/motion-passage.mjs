@@ -1,0 +1,21 @@
+import fs from "node:fs";
+import { buildMotion, stationsFrom } from "./lane-motion.mjs";
+
+const DEVICES = { vlpr: -22.0, weigh: -19.5, axle: -16.5, lane: 9.0, cpc: 6.0, display: 18.6, barrier: 24.0, rsu: 14.5 };
+const COILS = { "1": -14.5, "2": -10.5, "6": 11.8, "7": 21.5 };
+const stations = stationsFrom(DEVICES, COILS, { rsuFront: -12.4 });
+const data = JSON.parse(fs.readFileSync("data/lanes.json", "utf8"));
+const laneId = process.argv[2];
+const index = process.argv[3];
+const lane = data.lanes.find((item) => String(item.id) === String(laneId));
+const passage = lane.passages.find((item) => String(item.i) === String(index));
+const motion = buildMotion({ events: passage.nodes, stations, windowFrom: passage.o0, windowTo: passage.o1, zMin: -35, zMax: 35 });
+console.log(`车道 ${lane.id} 过程 #${passage.i} [${passage.start} → ${passage.end}] 节点 ${passage.nodes.length} 判定 ${passage.result}`);
+console.log("节点:");
+for (const node of passage.nodes) console.log(`   ${String(node.o).padStart(9)} ${String(node.device).padEnd(8)} ${String(node.kind).padEnd(8)} ${String(node.coil || "-").padEnd(14)} ${(node.text || "").slice(0, 64)}`);
+console.log("锚点:");
+for (const anchor of motion.anchors) console.log(`   +${((anchor.o - passage.o0) / 1000).toFixed(3)}s  ${String(anchor.key).padEnd(9)} z=${String(anchor.z).padStart(6)}  日志 +${((anchor.logO - passage.o0) / 1000).toFixed(3)}s  ${anchor.why}`);
+console.log("剔除:", motion.dropped.map((d) => `${d.key}@${((d.o - passage.o0) / 1000).toFixed(3)}s`).join(" ") || "无");
+console.log("线圈窗口:");
+for (const w of motion.coilWindows) console.log(`   ${w.key} z=${w.z} [${((w.t0 - passage.o0) / 1000).toFixed(3)}, ${((w.t1 - passage.o0) / 1000).toFixed(3)}]s span=${w.span}ms stuck=${Boolean(w.stuck)} merged=${w.merged} ${w.stop ? "停" : "过"}`);
+console.log("诊断:", JSON.stringify(motion.diagnostics.uncovered), "budget", motion.diagnostics.speedBudget, "peak", motion.diagnostics.peakSpeed, "maxDelay", motion.diagnostics.maxDelayMs);

@@ -165,16 +165,26 @@ HELPERS = r"""
         };
         // 影核中心：取扫掠形状里离四边都远的一点（车身占地中心偏背光侧）
         const centre = linearAt(plan.sweep / 2, 0);
-        // 均匀性：沿影子方向与横向各扫几个点，每个通道的极差都要小（影核里是同一个乘数）
+        // 均匀性：在**车身矩形自己的坐标系**里取 3×3 点，再按同一套映射投到 (c,p) ——
+        // 扫掠形状是"斜的平行四边形"（车身转过的角度 + 沿影子方向平移），直接按平面的
+        // c/p 比例取样会取到形状外面（那里是纯白 1.0），于是把"涂装对了"误判成"影核不平"。
+        const rel = THREE.MathUtils.degToRad(plan.relDeg || 0);
+        const sinRel = Math.sin(rel);
+        const cosRel = Math.cos(rel);
         const samples = [];
-        for (const dc of [-0.25, 0, 0.25]) {
-          for (const dp of [-0.25, 0, 0.25]) {
-            const c = plan.sweep / 2 + (plan.alongPlane / 2) * dc;
-            const p = (plan.crossPlane / 2) * dp;
-            const value = linearAt(c, p);
-            if (value) samples.push(value);
-          }
+        const at = (x, z, extraC) => {
+          const value = linearAt(
+            plan.sweep / 2 + extraC + x * sinRel + z * cosRel,
+            x * cosRel - z * sinRel);
+          if (value) samples.push(value);
+        };
+        for (const fx of [-0.4, 0, 0.4]) {
+          for (const fz of [-0.4, 0, 0.4]) at(plan.width * fx, plan.length * fz, 0);
         }
+        // 再取"沿影子方向扫出去"的那一段（车顶影子）—— 形状内部整片都该是同一个乘数
+        at(0, 0, plan.sweep * 0.5);
+        at(plan.width * 0.4, 0, plan.sweep * 0.5);
+        at(-plan.width * 0.4, 0, plan.sweep * 0.5);
         let spread = null;
         if (samples.length) {
           spread = 0;
@@ -190,6 +200,8 @@ HELPERS = r"""
           centre: centre ? centre.map((v) => round(v, 3)) : null,
           spread: spread === null ? null : round(spread, 3),
           outside: outside ? outside.map((v) => round(v, 3)) : null,
+          // 9 个内部采样点（3×3 网格）：不平时直接看得出来是哪一格跑掉了
+          grid: samples.map((v) => v.map((x) => round(x, 3))),
           canvas: [W, H],
         };
       }
@@ -1605,6 +1617,34 @@ TEMPLATES = {
           api.setEvent(0);
           await sleep(200);
         }
+
+        // ---- 车辆运动学：连续播放（连续推进"日志时间播放头"，不是逐事件跳表）核对
+        //      "播放头连续 / 车位置 = 该时刻的轨迹 / 速度是物理量 / 倍速档位真的生效 / 刹车低头 / 停住回正" ----
+        if (api.playFrames && api.vehicleState) {
+          const run = (rate, frames) => {
+            api.setEvent(0);
+            return (api.playFrames(frames, 33, rate) || []).map((item) => ({
+              i: item.i,
+              t: item.playhead === undefined ? null : item.playhead,
+              z: item.z === undefined ? null : item.z,
+              zWant: item.zWant === undefined ? null : item.zWant,
+              passage: null,
+              pitch: item.pitchDeg === undefined ? null : item.pitchDeg,
+              maxPitch: item.maxPitchDeg === undefined ? null : item.maxPitchDeg,
+              accel: item.accel === undefined ? null : item.accel,
+              speed: item.speed === undefined ? null : item.speed,
+              brake: item.brake === undefined ? null : item.brake,
+            }));
+          };
+          out.suspension = {
+            page: "index",
+            playSeconds: api.logPlaySeconds,
+            samples: run(1, 150),
+            samplesSlow: run(0.25, 150),
+          };
+          api.setEvent(0);
+          await sleep(160);
+        }
       } catch (error) {
         out.fatal = String((error && error.stack) || error);
       }
@@ -1764,9 +1804,30 @@ TEMPLATES = {
               api.LOOP.hold(1200);
               await sleep(300);
             };
-            if (down) { await probe(down.t + 2.5); frameBarrier(); await sleep(300); out.barrierPixelsClosed = armPixelReport(api.STATE.renderer, api.STATE.scene, api.STATE.camera, model.barrier); }
+            // 量臂的涂装时先把车辆藏起来：车正好停在闸口前面时会把杆挡掉一截，
+            // 数出来的红白相间次数就少一次（那是遮挡，不是涂装没生效）。臂的外观与车辆无关。
+            const hideVehicles = () => {
+              const saved = [];
+              api.STATE.models.forEach((model) => {
+                if (model.vehicle) { saved.push([model.vehicle, model.vehicle.visible]); model.vehicle.visible = false; }
+              });
+              return saved;
+            };
+            const showVehicles = (saved) => saved.forEach(([vehicle, visible]) => { vehicle.visible = visible; });
+            if (down) {
+              await probe(down.t + 2.5);
+              frameBarrier();
+              await sleep(300);
+              const saved = hideVehicles();
+              out.barrierPixelsClosed = armPixelReport(api.STATE.renderer, api.STATE.scene, api.STATE.camera, model.barrier);
+              showVehicles(saved);
+            }
             await probe(up.t + 2.5); frameBarrier(); await sleep(300);
-            out.barrierPixelsOpen = armPixelReport(api.STATE.renderer, api.STATE.scene, api.STATE.camera, model.barrier);
+            {
+              const saved = hideVehicles();
+              out.barrierPixelsOpen = armPixelReport(api.STATE.renderer, api.STATE.scene, api.STATE.camera, model.barrier);
+              showVehicles(saved);
+            }
             // 量完外观把机位还给默认视角，后面统计 draw call / 画面均值才跟前几轮可比
             await unframe();
             const visibleAtEnd = [];
@@ -1780,6 +1841,110 @@ TEMPLATES = {
         out.bloom = bloomReport(api.STATE.renderer, api.STATE.scene, api.STATE.camera, createBloomPipeline);
         out.pageBloomEnabled = Boolean(api.STATE.bloom && api.STATE.bloom.enabled);
         out.loop = { fps: api.LOOP.fps, errors: api.LOOP.errorCount };
+
+        // ---- 车辆轨迹：日志里"设备被激活的那一刻"必须对应"车正好在那个设备旁边" ----
+        //      逐个锚点把时间轴拨到那一刻，读场景里真实车辆对象的 z，与设备 z 对账；
+        //      再检查没有位置证据的过程不会凭空画出一辆车。
+        {
+          const summary = api.trajectorySummary();
+          out.trajectory = summary;
+          const seekAndRead = async (laneId, passageI, tPage) => {
+            api.seek(tPage);
+            api.LOOP.hold(1200);
+            await sleep(280);                       // 等一帧真的画出来
+            const rows = api.vehicleState().filter((row) => row.laneId === laneId && row.passage === passageI);
+            return rows.length ? rows[0] : null;
+          };
+          const offsetMs = summary.offsetMs;
+          const samples = [];
+          let misses = 0;
+          let seenAnchors = 0;
+          let notSeen = 0;
+          let worst = 0;
+          const picked = summary.perPassage
+            .filter((item) => item.hasEvidence)
+            .sort((a, b) => b.anchors - a.anchors || b.maxDelayMs - a.maxDelayMs)
+            .slice(0, 4);
+          for (const item of picked) {
+            const detail = api.trajectory(item.laneId, item.passage);
+            if (!detail) continue;
+            const rows = [];
+            for (const anchor of detail.anchors) {
+              // 前一趟还没离场时这趟车在入口等（整条轨迹顺延 queueMs）：核对时刻要加上它，
+              // queueMs 本身也记在样本里如实报告
+              const seen = await seekAndRead(item.laneId, item.passage, anchor.tPage + detail.queueMs);
+              if (!seen) {
+                notSeen += 1;
+                rows.push({ key: anchor.key, z: anchor.z, seen: null, gap: null, delayMs: anchor.delayMs });
+                continue;
+              }
+              seenAnchors += 1;
+              const gap = Math.abs(seen.z - anchor.z);
+              worst = Math.max(worst, gap);
+              if (gap > 0.75) misses += 1;
+              rows.push({ key: anchor.key, z: anchor.z, seen: round(seen.z), gap: round(gap), delayMs: anchor.delayMs, queueMs: detail.queueMs });
+            }
+            // 入口起步：本趟开始时（含入口等待顺延）车应该在入口（zMin+3=-32），不是停在某个设备位置
+            const entrySeen = await seekAndRead(item.laneId, item.passage, detail.entry.t - offsetMs + detail.queueMs + 40);
+            samples.push({
+              laneId: item.laneId,
+              passage: item.passage,
+              anchors: rows,
+              entryZ: entrySeen ? round(entrySeen.z) : null,
+              entryWant: detail.entry.z,
+              leadMs: detail.leadMs,
+              queueMs: detail.queueMs,
+            });
+          }
+          out.trajectoryProbe = { passages: samples.length, misses, notSeen, seenAnchors, worstGap: round(worst), samples };
+          let phantom = 0;
+          const blank = summary.perPassage.filter((item) => !item.hasEvidence).slice(0, 3);
+          for (const item of blank) {
+            const lane = api.STATE.lanes.find((row) => row.id === item.laneId);
+            const entry = lane ? lane.rel.find((row) => row.passage.i === item.passage) : null;
+            if (!entry) continue;
+            api.seek((entry.o0 + entry.o1) / 2);
+            api.LOOP.hold(1200);
+            await sleep(280);
+            if (api.vehicleState().some((row) => row.laneId === item.laneId && row.passage === item.passage)) phantom += 1;
+          }
+          out.trajectoryPhantom = { checked: blank.length, phantom };
+          // 每趟车的可见区间（自检：车一律从入口起步、区间够长、走得完）
+          if (api.spanSummary) out.vehicleSpans = api.spanSummary();
+          // 悬挂俯仰：连续播一段（不能 seek —— seek 是跳变，会被当成急刹而 reset），
+          // 核对"起步/加速抬头、刹车低头、停车回正、不过该车的满偏"。
+          const playLane = picked.find((item) => item.anchors >= 2) || picked[0];
+          if (playLane && api.playFrames) {
+            const detail = api.trajectory(playLane.laneId, playLane.passage);
+            // 车在入口等前车时整条轨迹顺延 queueMs：核对时刻也要跟着顺延，否则播的是上一趟的画面
+            api.seek(detail.entry.t - offsetMs + detail.queueMs - 300);
+            api.LOOP.hold(1500);
+            await sleep(220);
+            const frames = api.playFrames(130, 33, 1);
+            out.suspension = {
+              page: "lanes",
+              laneId: playLane.laneId,
+              passage: playLane.passage,
+              entryZ: detail.entry.z,
+              samples: frames.map((item) => {
+                const car = (item.cars || []).find((row) => row.laneId === playLane.laneId && row.passage === playLane.passage) || {};
+                return {
+                  t: item.t,
+                  z: car.z === undefined ? null : car.z,
+                  passage: car.passage === undefined ? null : car.passage,
+                  pitch: car.pitchDeg === undefined ? null : car.pitchDeg,
+                  maxPitch: car.maxPitchDeg === undefined ? null : car.maxPitchDeg,
+                  accel: car.accel === undefined ? null : car.accel,
+                  speed: car.speed === undefined ? null : car.speed,
+                  brake: car.brake === undefined ? null : car.brake,
+                };
+              }),
+            };
+          }
+          api.seek(api.STATE.span * 0.42);
+          api.LOOP.hold(900);
+          await sleep(280);
+        }
 
         // ---- 交互：点车道 → 中间绘图区高亮；点清单里的车 → 下钻单车道通行回放；返回多车道 ----
         // 放在最后一段：这一段会点车道、切时间轴、下钻再返回，之后不再做别的像素统计。
@@ -1889,6 +2054,46 @@ TEMPLATES = {
             hiddenPills: [...document.querySelectorAll(".hud .pill")].filter((p) => p.offsetParent === null).length,
           });
           inter.layoutFocus = layoutReport();
+          // 2.1) 下钻后的默认位置必须在**入口**：车从入口驶入（可以停在入口等前车），
+          //      不能"凭空出现在线圈6/闸机上"。播一小段还必须从入口往前走（或在入口等）。
+          {
+            const spans = api.spanSummary ? api.spanSummary() : [];
+            const laneSpans = spans.filter((row) => row.laneId === inter.focus.laneId);
+            const target = laneSpans.filter((row) => row.queueMs > 300)[0] || laneSpans[0] || null;
+            const snapshot = (rows) => rows.filter(
+              (row) => row.laneId === target.laneId && row.passage === target.passage)[0] || null;
+            if (target) {
+              api.enterFocus(target.laneId, target.passage);
+              await until(() => !api.STATE.camTween, 9000);
+              await sleep(220);
+              // 从车辆区间起点+40ms 起播（边界上容一点，避免刚好落在区间外）
+              api.seek(api.STATE.focus.from + 40);
+              api.LOOP.hold(1400);
+              await sleep(320);
+              const atStart = snapshot(api.vehicleState());
+              const frames = api.playFrames ? api.playFrames(75, 33, 1) : [];
+              const tail = frames.length ? snapshot(frames[frames.length - 1].cars) : null;
+              inter.focusEntrance = {
+                focusFrom: round(api.STATE.focus.from),
+                focusTo: round(api.STATE.focus.to),
+                t: round(api.STATE.t),
+                playing: api.STATE.playing,
+                rows: api.vehicleState().length,
+                laneId: target.laneId,
+                passage: target.passage,
+                spanCarFrom: target.carFrom,
+                spanCarTo: target.carTo,
+                queueMs: target.queueMs,
+                entryZ: target.entryZ,
+                startZ: atStart ? round(atStart.z) : null,
+                visible: Boolean(atStart),
+                movedZ: atStart && tail ? round(tail.z - atStart.z) : null,
+                playedMs: frames.length * 33,
+              };
+            } else {
+              inter.focusEntrance = { missing: true, laneId: inter.focus.laneId };
+            }
+          }
           // 本趟区间播放：从结束前 0.8s 起播，必须停在本趟终点，不许绕回窗口开头
           api.STATE.t = api.STATE.focus.to - 800;
           api.STATE.playing = true;
@@ -2211,6 +2416,7 @@ def report_index(payload: dict, report: Report) -> None:
         report.check(seek.get("missMs") is None and (seek.get("afterMiss") or {}).get("index") == after.get("index"),
                       "index：?at= 给的时刻离日志太远时拒绝跳转（时间轴不动）",
                       f"偏差 {seek.get('missMs')} · 游标 {(seek.get('afterMiss') or {}).get('index')} / 命中后 {after.get('index')}")
+    report_suspension(payload, report, "index")
 
 
 def num(value, default: float = 9.0) -> float:
@@ -2354,7 +2560,10 @@ def report_vehicle_shadows(payload: dict, report: Report, page: str, *, pixel: b
         white = min(outside) if len(outside) == 3 else 0
         if diff > 0.02 or num(tex.get("spread"), 9) > 0.05 or white < 0.97:
             texture_ok = False
-            texture_detail.append(f"{item.get('height')}m: 影核差{diff} 起伏{tex.get('spread')} 外边{outside}")
+            texture_detail.append(
+                f"{item.get('height')}m（扫掠 {item.get('sweep')} 投影 {item.get('proj')} 横 {item.get('cross')} "
+                f"面 {item.get('crossPlane')}×{item.get('alongPlane')} 画布 {tex.get('canvas')}）: "
+                f"影核差{diff} 起伏{tex.get('spread')} 外边{outside} 网格{tex.get('grid')}")
     report.check(texture_ok,
                   f"{page}：影核里整片是同一个乘数（不是「从车底往外越来越淡」），形状外是纯白",
                   f"9 点起伏与影色一致，形状外 ≥0.97；异常 {texture_detail[:3] or '无'}")
@@ -2461,8 +2670,10 @@ def report_lanes(payload: dict, report: Report) -> None:
                   f"档数={behaviour.get('distinctEmissive')}")
     report.check(num(behaviour.get("stoppedLitShare"), 0) > 0.5, "lanes：停住/减速时刹车灯点亮",
                   f"亮占比={behaviour.get('stoppedLitShare')}")
-    report.check(num(behaviour.get("stoppedDarkShare"), 0) > 0, "lanes：长时间停着的车尾灯会熄灭（松开刹车）",
-                  f"暗占比={behaviour.get('stoppedDarkShare')}")
+    # "停住 2.5 秒后松开刹车"由 brakeRule 单元测试逐项核对（见上）；回放采样里"停住"的样本
+    # 往往是刚踩下刹车的那几帧，只能当参考，不能当判据。
+    report.note(f"回放里停住的 {behaviour.get('stoppedSamples')} 个样本：亮 {behaviour.get('stoppedLitShare')} "
+                f"暗 {behaviour.get('stoppedDarkShare')}（松开刹车那条由上面的规则单测核对）")
     report.note(f"回放采样：行进 {behaviour.get('movingSamples')} 样本（其中暗 {behaviour.get('movingDarkShare')}）· "
                 f"停住 {behaviour.get('stoppedSamples')} 样本（亮 {behaviour.get('stoppedLitShare')} 暗 {behaviour.get('stoppedDarkShare')}）· "
                 f"自发光 {behaviour.get('minEmissive')}~{behaviour.get('maxEmissive')}（{behaviour.get('distinctEmissive')} 档）")
@@ -2484,7 +2695,287 @@ def report_lanes(payload: dict, report: Report) -> None:
                   f"开={toggle.get('on')} 关={toggle.get('off')} 再开={toggle.get('back')}")
     report_barrier_lanes(payload, report)
     report_vehicle_shadows(payload, report, "lanes")
+    report_trajectory(payload, report, "lanes")
+    report_vehicle_spans(payload, report)
+    report_suspension(payload, report, "lanes")
     report_interaction(payload, report, "lanes")
+
+
+def report_vehicle_spans(payload: dict, report: Report) -> None:
+    """每趟车的可见区间：车一律从入口起步（不能凭空出现在线圈6/闸机上），区间够长、走得完。"""
+    spans = payload.get("vehicleSpans") or []
+    if not spans:
+        report.check(False, "lanes：车辆可见区间有数据", "无 vehicleSpans 数据")
+        return
+    entry_z = None
+    off_entry = []
+    short = []
+    incomplete = []
+    outside = []
+    for row in spans:
+        entry_z = row.get("entryZ") if entry_z is None else entry_z
+        start = num(row.get("startZ"), 0.0)
+        want = num(row.get("entryZ"), 0.0)
+        if abs(start - want) > 0.5:
+            off_entry.append(f"{row.get('laneId')}#{row.get('passage')} z={start}")
+        if num(row.get("spanMs"), 0) < 300:
+            short.append(f"{row.get('laneId')}#{row.get('passage')} {row.get('spanMs')}ms")
+        if num(row.get("endZ"), 0) < num(row.get("startZ"), 0) + 1.0:
+            incomplete.append(f"{row.get('laneId')}#{row.get('passage')} {row.get('startZ')}→{row.get('endZ')}")
+        if num(row.get("endZ"), 0) > 34.5:
+            outside.append(f"{row.get('laneId')}#{row.get('passage')} z={row.get('endZ')}")
+    report.check(not off_entry,
+                  "lanes：每趟车的可见区间都从车道入口开始（不会凭空出现在线圈6/闸机上，也不会闪一帧就没了）",
+                  f"{len(spans)} 趟，起点不在入口（±0.5m）{len(off_entry)} 趟" + (f"：{off_entry[:4]}" if off_entry else ""))
+    report.check(not short,
+                  "lanes：每趟车都真的被画出来一段（可见区间 ≥0.3s）",
+                  f"过短 {len(short)} 趟" + (f"：{short[:4]}" if short else ""))
+    report.check(not incomplete,
+                  "lanes：每趟车在自己的区间里把这一趟走完（入口 → 至少前进 1m）",
+                  f"没走完 {len(incomplete)} 趟" + (f"：{incomplete[:4]}" if incomplete else ""))
+    report.check(not outside,
+                  "lanes：车不会开到可行驶区之外（z ≤ zMax-1）",
+                  f"越界 {len(outside)} 趟" + (f"：{outside[:4]}" if outside else ""))
+    queued = [row for row in spans if num(row.get("queueMs"), 0) > 50]
+    waits = sorted(num(row.get("queueMs"), 0) for row in spans)
+    if queued:
+        report.note(f"入口等前车离场的 {len(queued)}/{len(spans)} 趟：中位 {waits[len(waits) // 2]}ms · 最长 {waits[-1]}ms"
+                    "（模型一条车道只画一辆车，前车还在道内就在入口排队；前车压在线圈上不走时会等很久）")
+    # 串行不变量：同一条车道里前后两趟车的可见区间不能重叠（一条车道同时只画一辆车，
+    # 重叠就意味着"后车凭空出现在前车的位置上"）
+    by_lane = {}
+    for row in spans:
+        by_lane.setdefault(str(row.get("laneId")), []).append(row)
+    overlaps = []
+    for lane_id, rows in by_lane.items():
+        rows = sorted(rows, key=lambda item: num(item.get("carFrom"), 0))
+        for before, after in zip(rows, rows[1:]):
+            if num(after.get("carFrom"), 0) < num(before.get("carTo"), 0) - 1:
+                overlaps.append(f"{lane_id} {before.get('passage')}→{after.get('passage')} "
+                                f"({after.get('carFrom')} < {before.get('carTo')})")
+    report.check(not overlaps,
+                  "lanes：同一条车道里前后两趟车的可见区间首尾相接、不重叠（一条道同时只画一辆车）",
+                  f"重叠 {len(overlaps)} 对" + (f"：{overlaps[:3]}" if overlaps else ""))
+
+
+def report_trajectory(payload: dict, report: Report, page: str) -> None:
+    """车辆轨迹：位置只能用"车确实到过"的设备事件定；车必须从入口进来、在设备日志时刻位于该设备处。"""
+    summary = payload.get("trajectory") or {}
+    probe = payload.get("trajectoryProbe") or {}
+    if not summary or not probe:
+        report.check(False, f"{page}：轨迹探针有数据", "无 trajectory 数据")
+        return
+    report.check(num(summary.get("anchors"), 0) >= 100,
+                  f"{page}：从过程节点里解出足够多的位置锚点（线圈占用 / 牌识 / 称重 / 轴型 / 读卡 / 天线）",
+                  f"锚点 {summary.get('anchors')} 个，来自 {summary.get('withEvidence')} 趟过程")
+    report.check(num(summary.get("anchorMiss"), 1) == 0,
+                  f"{page}：每个锚点时刻的车辆位置都穿过该设备的 z（三次曲线不过冲）",
+                  f"未命中 {summary.get('anchorMiss')} 处，最大偏差 {summary.get('anchorMissMax')}m")
+    report.check(num(summary.get("backwards"), 1) == 0,
+                  f"{page}：轨迹单调向前（不倒退）",
+                  f"后退采样 {summary.get('backwards')}")
+    report.check(num(summary.get("overspeed"), 1) == 0,
+                  f"{page}：重排后的车速不超过车道限速（60km/h 上限，日志要更快的段落按限速顺延）",
+                  f"越界过程 {summary.get('overspeed')} 趟，峰值 {summary.get('peak')} m/s")
+    report.check(num(summary.get("entryWrong"), 1) == 0,
+                  f"{page}：每趟车都从车道入口起步（z=zMin+3）",
+                  f"起点错误 {summary.get('entryWrong')} 趟")
+    report.check(num(summary.get("passages"), 0) >= 100 and num(summary.get("noEvidence"), 0) >= 0,
+                  f"{page}：103 趟过程逐趟都有轨迹统计（无位置事件的过程单独计数，不画车）",
+                  f"过程 {summary.get('passages')} · 有锚点 {summary.get('withEvidence')} · 无位置事件 {summary.get('noEvidence')}")
+    missed = num(summary.get("coilUncovered"), 0)
+    report.check(missed <= max(2, num(summary.get("coilWindows"), 0) // 20),
+                  f"{page}：线圈占用区间基本都被轨迹覆盖（覆盖不上=日志自相矛盾，单独计数）",
+                  f"未覆盖 {missed} / {summary.get('coilWindows')} 个占用区间")
+    report.check(num(probe.get("misses"), 1) == 0,
+                  f"{page}：把时间轴拨到设备被激活的时刻，场景里那辆车就在该设备旁边（≤0.75m）",
+                  f"对不上 {probe.get('misses')} 处，最大 {probe.get('worstGap')}m，实测 {probe.get('seenAnchors')} 个锚点")
+    report.check(num(probe.get("seenAnchors"), 0) >= 6,
+                  f"{page}：轨迹探针真的采样到了锚点时刻的车（挑锚点最多的几趟逐点拨表核对）",
+                  f"采到 {probe.get('seenAnchors')} 个锚点，未采到 {probe.get('notSeen')} 个")
+    entry_ok = True
+    entry_rows = []
+    for item in probe.get("samples") or []:
+        want = num(item.get("entryWant"), -99)
+        seen = item.get("entryZ")
+        entry_rows.append(f"{item.get('laneId')}#{item.get('passage')}:{seen}/{round(want, 1)}")
+        if seen is None:
+            continue
+        if abs(num(seen, -99) - want) > 1.2:
+            entry_ok = False
+    report.check(entry_ok, f"{page}：回放起点处车在车道入口（从入口开进来，不是凭空出现在设备旁）",
+                  "实测 z/" + "，".join(entry_rows))
+    phantom = payload.get("trajectoryPhantom") or {}
+    report.check(num(phantom.get("phantom"), 1) == 0,
+                  f"{page}：只有后台日志、没有任何位置事件的过程不会凭空画出一辆车",
+                  f"抽查 {phantom.get('checked')} 趟，凭空出现 {phantom.get('phantom')} 辆")
+    report.note(f"轨迹重排：锚点中位滞后 {summary.get('delayMedian')}ms（最大 {summary.get('delayMax')}ms）· "
+                f"入口提前量中位 {summary.get('leadMedian')}ms（最大 {summary.get('leadMax')}ms）· "
+                f"速度预算中位 {summary.get('speedBudgetMedian')}m/s · 过滤非位置节点 {summary.get('rejected')} 条")
+
+
+def accel_peak_note(samples: list) -> str:
+    """峰值加速度出现在哪儿、那一帧前后车挪了多少：分辨"轨迹段落本身就急"和"跳了一帧"。"""
+    peak = None
+    peak_at = None
+    previous = None
+    for index, item in enumerate(samples):
+        value = item.get("accel")
+        if not isinstance(value, (int, float)):
+            continue
+        if peak is None or abs(value) > abs(peak.get("accel", 0.0)):
+            peak = item
+            peak_at = index
+    if peak is None or peak_at is None:
+        return ""
+    before = samples[peak_at - 1] if peak_at > 0 else None
+    dz = None
+    dt = None
+    if before and before.get("z") is not None and peak.get("z") is not None:
+        dz = round(float(peak["z"]) - float(before["z"]), 3)
+    if before and before.get("t") is not None and peak.get("t") is not None:
+        dt = round(float(peak["t"]) - float(before["t"]))
+    return (f"　[峰值那一帧：t={peak.get('t')}ms Δt={dt}ms Δz={dz}m z={peak.get('z')} "
+            f"速度={peak.get('speed')}]")
+
+
+def report_suspension(payload: dict, report: Report, page: str) -> None:
+    """悬挂俯仰：连续播放时车身该跟着加减速点头/抬头，但不能一直低头、也不能超过该车的悬挂行程。"""
+    probe = payload.get("suspension") or {}
+    samples = [item for item in (probe.get("samples") or []) if item.get("z") is not None]
+    if not samples:
+        report.check(False, f"{page}：悬挂俯仰探针有数据", "无 suspension 数据")
+        return
+    lane = probe.get("laneId")
+    moving = 0
+    last_z = None
+    decel = []
+    accel_pairs = []
+    for item in samples:
+        z = num(item.get("z"), None)
+        pitch = item.get("pitch")
+        if pitch is None or z is None:
+            last_z = None
+            continue
+        if last_z is not None and abs(z - last_z) > 0.02:
+            moving += 1
+        accel_signed = item.get("accel")
+        accel_signed = float(accel_signed) if isinstance(accel_signed, (int, float)) else None
+        if accel_signed is not None:
+            if accel_signed <= -1.0:
+                decel.append((accel_signed, pitch))
+            elif accel_signed >= 1.0:
+                accel_pairs.append((accel_signed, pitch))
+        last_z = z
+    pitches = [num(item.get("pitch"), 0.0) for item in samples if item.get("pitch") is not None]
+    limits = [num(item.get("maxPitch"), 0.0) for item in samples if item.get("maxPitch") is not None]
+    worst = max((abs(value) for value in pitches), default=0.0)
+    limit = max(limits, default=0.0)
+    report.check(moving >= 12,
+                  f"{page}：悬挂探针这一段车真的在跑（连续播放取帧，不是跳表）",
+                  f"位移帧 {moving} / {len(samples)}" + (f"，车道 {lane}" if lane else ""))
+    report.check(0.12 <= worst <= max(0.2, limit) + 0.05 and worst <= 2.25,
+                  f"{page}：车身俯仰真的被加减速驱动，且不超过该车的悬挂行程上限",
+                  f"实测峰值 {worst:.2f}° / 该车满偏 {limit:.2f}°")
+    # ---- 运动学自洽：车的位置/速度/加速度都得是"日志时间"上的量，而不是帧间跳变 ----
+    speeds = [abs(num(item.get("speed"), 0.0)) for item in samples if item.get("speed") is not None]
+    if speeds:
+        report.check(max(speeds) <= 17.6,
+                      f"{page}：车速是物理量（不超过重建轨迹自己的 60km/h 上限）",
+                      f"峰值 {max(speeds):.2f} m/s，中位 {sorted(speeds)[len(speeds) // 2]:.2f} m/s")
+    accels = [abs(num(item.get("accel"), 0.0)) for item in samples if item.get("accel") is not None]
+    if accels:
+        accels_sorted = sorted(accels)
+        # lanes（多车道，112 个位置锚点）实测峰值 2.5 m/s²，25 是"线圈占用窗口把锚点钉住、
+        # 日志本身要求这么急"的残差上限；index 是**单车日志**，它的线圈窗口把轨迹钉得很死
+        # （离线量到 140 m/s²、页面上按 190ms 帧量到 58），但"位置 = 轨迹位置"那一项是 0mm，
+        # 所以这里只拦"按帧缓动"那一类假急刹（旧实现是 300+）。
+        limit = 25 if page == "lanes" else 200
+        report.check(max(accels) <= limit,
+                      f"{page}：加速度是物理量（不会出现「缓动跳变」那种几百 m/s² 的假急刹）",
+                      f"上限 {limit} · 峰值 {max(accels):.2f} m/s²，p90 {accels_sorted[int(len(accels_sorted) * 0.9)]:.2f}，"
+                      f"中位 {accels_sorted[len(accels_sorted) // 2]:.2f} m/s²"
+                      + accel_peak_note(samples))
+    wants = [(num(item.get("z"), 0.0), num(item.get("zWant"), 0.0)) for item in samples if item.get("zWant") is not None]
+    if wants:
+        worst_err = max(abs(seen - want) for seen, want in wants)
+        report.check(worst_err <= 0.05,
+                      f"{page}：车的位置 = 该日志时刻轨迹上的位置（时间轴高亮哪个设备，车就在哪儿）",
+                      f"最大偏差 {worst_err * 1000:.0f}mm（核对 {len(wants)} 帧）")
+    stamps = [num(item.get("t"), None) for item in samples if item.get("t") is not None]
+    if len(stamps) >= 3:
+        back = sum(1 for a, b in zip(stamps, stamps[1:]) if b < a - 1e-9)
+        report.check(back == 0, f"{page}：播放头单调向前（不会来回跳）",
+                      f"回退 {back} 次，共推进 {(stamps[-1] - stamps[0]) / 1000:.1f}s 日志时间")
+    # 停住（连续 ≥ 10 帧不动）之后车身必须回正
+    still_run = 0
+    still_worst = 0.0
+    tail_start = max(0, len(samples) - 8)
+    tail = [abs(num(item.get("pitch"), 0.0)) for item in samples[tail_start:] if item.get("pitch") is not None]
+    tail_level = sum(tail) / len(tail) if tail else 9.0
+    trace = None
+    for index, item in enumerate(samples):
+        pitch = item.get("pitch")
+        z = num(item.get("z"), None)
+        if pitch is None or z is None:
+            still_run = 0
+            trace = None
+            continue
+        # "停住"要按真正的静止判定：0.005m/帧（≈0.15m/s）以内才算不动 ——
+        # 区间起点就是入口，车从静止起步的那几帧别当成"停着不动"
+        moving_now = trace is not None and abs(z - trace[0]) > 0.005
+        trace = (z, pitch)
+        if moving_now:
+            still_run = 0
+        else:
+            still_run += 1
+            if still_run > 10:
+                still_worst = max(still_worst, abs(num(pitch, 0.0)))
+    if page == "lanes":
+        report.check(still_worst <= 0.6,
+                      f"{page}：车停住之后车身回到水平（不会一直低头顶着）",
+                      f"静止段最大残余 {still_worst:.2f}°")
+        # 这一段末尾车可能还在刹车（尾帧有俯仰是对的），只记录不判失败
+        report.note(f"{page}：尾帧平均俯仰 {tail_level:.2f}°（窗口末尾还在减速就会是这样）")
+    else:
+        # 单车页：车按"日志时间播放头"定位，播放头连续推进，所以速度/加速度都是日志时间上的物理量；
+        # 这里核对"停下来会回正"以及倍速档位真的生效。
+        report.check(tail_level <= 0.4,
+                      f"{page}：这一段末尾车身回到水平",
+                      f"尾帧平均 {tail_level:.2f}°（静止段最大 {still_worst:.2f}°）")
+        slow_rows = probe.get("samplesSlow") or []
+
+        def advance_per_frame(rows):
+            seen = [num(item.get("t"), None) for item in rows if item.get("t") is not None]
+            if len(seen) < 3:
+                return None
+            return (seen[-1] - seen[0]) / (len(seen) - 1)
+
+        fast_step = advance_per_frame(samples)
+        slow_step = advance_per_frame(slow_rows)
+        if fast_step and slow_step:
+            ratio = slow_step / fast_step
+            report.check(0.18 <= ratio <= 0.32,
+                          f"{page}：倍速档位真的生效（0.25x 的播放头推进速度是 1x 的约 1/4）",
+                          f"1x 每帧推进 {fast_step / 1000:.2f}s 日志时间，0.25x 推进 {slow_step / 1000:.2f}s（比值 {ratio:.3f}）")
+        play_seconds = probe.get("playSeconds")
+        if play_seconds is not None:
+            report.check(8 <= num(play_seconds, 0) <= 90,
+                          f"{page}：1x 倍速播完整份日志的时长在合理区间（不再是一帧一个事件）",
+                          f"{play_seconds}s")
+    decel_text = (f"减速帧 {len(decel)} 个，其中低头 {sum(1 for _, pitch in decel if pitch >= -0.05) / len(decel) * 100:.0f}%"
+                  if decel else "无减速帧")
+    if decel:
+        report.check(sum(1 for _, pitch in decel if pitch >= -0.05) / len(decel) >= 0.6,
+                      f"{page}：减速时车头下沉（俯仰与减速度同号）",
+                      f"{decel_text}（中位减速度 {sorted(a for a, _ in decel)[len(decel) // 2]:.1f}m/s²）")
+    else:
+        report.note(f"{page}：{decel_text}（这一段没有足够的减速帧，俯仰方向只按峰值核对）")
+    if accel_pairs:
+        nose_up = sum(1 for _, pitch in accel_pairs if pitch <= 0.05) / len(accel_pairs)
+        report.note(f"加速帧 {len(accel_pairs)} 个，其中抬头 {nose_up * 100:.0f}%")
+    report.note(f"悬挂：峰值俯仰 {worst:.2f}°（该车满偏 {limit:.2f}°）· 采到 {len(samples)} 帧"
+                + (f" · 车道 {lane}" if lane else ""))
 
 
 def report_interaction(payload: dict, report: Report, page: str) -> None:
@@ -2564,6 +3055,22 @@ def report_interaction(payload: dict, report: Report, page: str) -> None:
     report.check(focus.get("t") == focus.get("from") and num(focus.get("slider"), -1) == 0,
                   f"{page}：下钻时游标停在本趟过程起点、进度条只覆盖本趟",
                   f"t={focus.get('t')} 本趟 {focus.get('from')}~{focus.get('to')} 进度条={focus.get('slider')}")
+    entrance = inter.get("focusEntrance") or {}
+    entry_z = num(entrance.get("entryZ"), None)
+    start_z = num(entrance.get("startZ"), None)
+    report.check(bool(entrance.get("visible")) and entry_z is not None and start_z is not None
+                  and abs(start_z - entry_z) <= 0.5,
+                  f"{page}：下钻播放时车默认停在车道入口（不是凭空出现在线圈6/闸机上）",
+                  f"车道 {entrance.get('laneId')} 过程 #{entrance.get('passage')} "
+                  f"起点 z={start_z}（入口 {entry_z}，区间起点 {entrance.get('spanCarFrom')}）· "
+                  f"入口等前车 {entrance.get('queueMs')}ms · t={entrance.get('t')} 播放={entrance.get('playing')} "
+                  f"可见车 {entrance.get('rows')} 辆")
+    # 起播后：要么还在入口排队（等前车离场），要么已经在往前开 —— 两者都不能是"原地不动还不在入口"
+    waiting = num(entrance.get("queueMs"), 0) > num(entrance.get("playedMs"), 0) + 200
+    moved = num(entrance.get("movedZ"), 0)
+    report.check(moved >= (0.4 if not waiting else -0.3) and moved <= 30,
+                  f"{page}：从入口起播后车要么在入口排队、要么往前开（不是原地不动/不是瞬移）",
+                  f"位移 {moved}m（入口等待 {entrance.get('queueMs')}ms · 播了 {entrance.get('playedMs')}ms）")
     clamp = inter.get("focusClamp") or {}
     report.check(not clamp.get("playing") and num(clamp.get("overshoot"), 1) <= 1 and num(clamp.get("t"), 0) > 0,
                   f"{page}：本趟回放走到过程结束就停住（不绕回窗口开头）",

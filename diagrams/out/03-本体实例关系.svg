@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1814.00" height="1402.50" viewBox="0 0 1814.00 1402.50" aria-label="本体实例关系：Passage 锚点 + 实体属性 + 关系边" font-family="&quot;Microsoft YaHei&quot;, &quot;PingFang SC&quot;, &quot;Noto Sans CJK SC&quot;, ui-sans-serif, system-ui, sans-serif">
+  <rect x="0.00" y="0.00" width="1814.00" height="1402.50" rx="0.00" fill="#ffffff" stroke="none" />
+  <g data-shape="node">
+    <path d="M 767.00 492.50 A 10.00 10.00 0 0 1 777.00 482.50 L 1031.00 482.50 A 10.00 10.00 0 0 1 1041.00 492.50 L 1041.00 592.50 A 10.00 10.00 0 0 1 1031.00 602.50 L 777.00 602.50 A 10.00 10.00 0 0 1 767.00 592.50 L 767.00 492.50 Z" fill="#f59e0b" stroke="#d97706" stroke-width="1.5" />
+    <text x="777.00" y="506.40" fill="#451a03" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="600.00">Passage 一次通行</tspan><tspan font-weight="400.00">（锚点）</tspan></text>
+    <text x="777.00" y="522.70" fill="#451a03" font-family="inherit" font-size="13">passageId = 车道 + 分钟 + 主标识</text>
+    <text x="777.00" y="538.90" fill="#451a03" font-family="inherit" font-size="13">vehicle：车牌 / 车型 / 完整 OBU</text>
+    <text x="777.00" y="555.20" fill="#451a03" font-family="inherit" font-size="13">times：A1·B1·C1·T2·T3·T4</text>
+    <text x="777.00" y="571.40" fill="#451a03" font-family="inherit" font-size="13">elapsedBarrierMs / elapsedPassMs</text>
+    <text x="777.00" y="587.70" fill="#451a03" font-family="inherit" font-size="13">result：released / blocked</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 1491.00 88.50 A 10.00 10.00 0 0 1 1501.00 78.50 L 1747.00 78.50 A 10.00 10.00 0 0 1 1757.00 88.50 L 1757.00 156.50 A 10.00 10.00 0 0 1 1747.00 166.50 L 1501.00 166.50 A 10.00 10.00 0 0 1 1491.00 156.50 L 1491.00 88.50 Z" fill="#ffffff" stroke="#6ee7b7" stroke-width="1.5" />
+    <text x="1501.00" y="102.70" fill="#064e3b" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="600.00">PassageStep 过程节点</tspan></text>
+    <text x="1501.00" y="118.90" fill="#064e3b" font-family="inherit" font-size="13">kind：线圈 / 栏杆 / 牌识 / 天线</text>
+    <text x="1501.00" y="135.20" fill="#064e3b" font-family="inherit" font-size="13">at + device + 原文摘要</text>
+    <text x="1501.00" y="151.40" fill="#064e3b" font-family="inherit" font-size="13">evidenceRef → ES _id</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 1571.00 578.50 A 10.00 10.00 0 0 1 1581.00 568.50 L 1787.00 568.50 A 10.00 10.00 0 0 1 1797.00 578.50 L 1797.00 646.50 A 10.00 10.00 0 0 1 1787.00 656.50 L 1581.00 656.50 A 10.00 10.00 0 0 1 1571.00 646.50 L 1571.00 578.50 Z" fill="#ffffff" stroke="#6ee7b7" stroke-width="1.5" />
+    <text x="1581.00" y="592.70" fill="#064e3b" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="600.00">Transaction 交易</tspan></text>
+    <text x="1581.00" y="608.90" fill="#064e3b" font-family="inherit" font-size="13">obuId / fee / payFee</text>
+    <text x="1581.00" y="625.20" fill="#064e3b" font-family="inherit" font-size="13">checkResult / vehicleClass</text>
+    <text x="1581.00" y="641.40" fill="#064e3b" font-family="inherit" font-size="13">passId（入口、出口各一条）</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 1339.00 988.50 A 10.00 10.00 0 0 1 1349.00 978.50 L 1579.00 978.50 A 10.00 10.00 0 0 1 1589.00 988.50 L 1589.00 1056.50 A 10.00 10.00 0 0 1 1579.00 1066.50 L 1349.00 1066.50 A 10.00 10.00 0 0 1 1339.00 1056.50 L 1339.00 988.50 Z" fill="#ffffff" stroke="#6ee7b7" stroke-width="1.5" />
+    <text x="1349.00" y="1002.70" fill="#064e3b" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="600.00">WasteRecord 流水</tspan></text>
+    <text x="1349.00" y="1018.90" fill="#064e3b" font-family="inherit" font-size="13">generateAt → uploadAt</text>
+    <text x="1349.00" y="1035.20" fill="#064e3b" font-family="inherit" font-size="13">uploadDelayMs</text>
+    <text x="1349.00" y="1051.40" fill="#064e3b" font-family="inherit" font-size="13">牌识匹配（车牌 + 牌识时间戳）</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 23.00 97.00 A 10.00 10.00 0 0 1 33.00 87.00 L 255.00 87.00 A 10.00 10.00 0 0 1 265.00 97.00 L 265.00 148.00 A 10.00 10.00 0 0 1 255.00 158.00 L 33.00 158.00 A 10.00 10.00 0 0 1 23.00 148.00 L 23.00 97.00 Z" fill="#ffffff" stroke="#93c5fd" stroke-width="1.5" />
+    <text x="33.00" y="110.80" fill="#1e3a8a" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="600.00">Lane 车道</tspan></text>
+    <text x="33.00" y="127.10" fill="#1e3a8a" font-family="inherit" font-size="13">laneNo / type / role / coils</text>
+    <text x="33.00" y="143.30" fill="#1e3a8a" font-family="inherit" font-size="13">adjacency 邻接（待现场确认）</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 710.50 27.00 A 10.00 10.00 0 0 1 720.50 17.00 L 887.50 17.00 A 10.00 10.00 0 0 1 897.50 27.00 L 897.50 78.00 A 10.00 10.00 0 0 1 887.50 88.00 L 720.50 88.00 A 10.00 10.00 0 0 1 710.50 78.00 L 710.50 27.00 Z" fill="#ffffff" stroke="#93c5fd" stroke-width="1.5" />
+    <text x="720.50" y="40.80" fill="#1e3a8a" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="600.00">Device 设备</tspan></text>
+    <text x="720.50" y="57.10" fill="#1e3a8a" font-family="inherit" font-size="13">E4 栏杆 · E5 线圈</text>
+    <text x="720.50" y="73.30" fill="#1e3a8a" font-family="inherit" font-size="13">E6 牌识 · E2 车型识别</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 95.00 978.50 A 10.00 10.00 0 0 1 105.00 968.50 L 303.00 968.50 A 10.00 10.00 0 0 1 313.00 978.50 L 313.00 1046.50 A 10.00 10.00 0 0 1 303.00 1056.50 L 105.00 1056.50 A 10.00 10.00 0 0 1 95.00 1046.50 L 95.00 978.50 Z" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.5" />
+    <text x="105.00" y="992.70" fill="#4c1d95" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="600.00">Evidence 证据</tspan></text>
+    <text x="105.00" y="1008.90" fill="#4c1d95" font-family="inherit" font-size="13">index + _id + 日志行时间</text>
+    <text x="105.00" y="1025.20" fill="#4c1d95" font-family="inherit" font-size="13">caliber 口径 / confidence</text>
+    <text x="105.00" y="1041.40" fill="#4c1d95" font-family="inherit" font-size="13">缺证据 = MISSING(node)</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 17.00 548.50 A 10.00 10.00 0 0 1 27.00 538.50 L 241.00 538.50 A 10.00 10.00 0 0 1 251.00 548.50 L 251.00 616.50 A 10.00 10.00 0 0 1 241.00 626.50 L 27.00 626.50 A 10.00 10.00 0 0 1 17.00 616.50 L 17.00 548.50 Z" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.5" />
+    <text x="27.00" y="562.70" fill="#4c1d95" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="600.00">Metric 基线</tspan></text>
+    <text x="27.00" y="578.90" fill="#4c1d95" font-family="inherit" font-size="13">(车道 × 车型) 分组</text>
+    <text x="27.00" y="595.20" fill="#4c1d95" font-family="inherit" font-size="13">median + mad + k + 样本数</text>
+    <text x="27.00" y="611.40" fill="#4c1d95" font-family="inherit" font-size="13">source：dynamic / coldstart</text>
+  </g>
+  <g data-shape="node">
+    <path d="M 655.00 1050.50 A 10.00 10.00 0 0 1 665.00 1040.50 L 943.00 1040.50 A 10.00 10.00 0 0 1 953.00 1050.50 L 953.00 1134.50 A 10.00 10.00 0 0 1 943.00 1144.50 L 665.00 1144.50 A 10.00 10.00 0 0 1 655.00 1134.50 L 655.00 1050.50 Z" fill="#ffffff" stroke="#fda4af" stroke-width="1.5" />
+    <text x="665.00" y="1064.60" fill="#881337" font-family="inherit" font-size="13" xml:space="preserve"><tspan font-weight="600.00">Anomaly 异常</tspan></text>
+    <text x="665.00" y="1080.80" fill="#881337" font-family="inherit" font-size="13">type + rootCause</text>
+    <text x="665.00" y="1097.10" fill="#881337" font-family="inherit" font-size="13">observedMs / thresholdMs / rule</text>
+    <text x="665.00" y="1113.30" fill="#881337" font-family="inherit" font-size="13">verdict：已证实 / 规则推断 / 待核实</text>
+    <text x="665.00" y="1129.60" fill="#881337" font-family="inherit" font-size="13">status：open / confirmed / closed</text>
+  </g>
+  <g data-shape="edge">
+    <path d="M 1041.00 542.50 L 1256.00 542.50 A 10.00 10.00 0 0 0 1266.00 532.50 L 1266.00 132.50 A 10.00 10.00 0 0 1 1276.00 122.50 L 1484.00 122.50" fill="none" stroke="#6ee7b7" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 1491.00 122.50 L 1484.00 125.65 L 1484.00 119.35 Z" fill="#6ee7b7" stroke="#6ee7b7" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 1041.00 566.50 L 1296.00 566.50 A 10.00 10.00 0 0 1 1306.00 576.50 L 1306.00 584.90 A 10.00 10.00 0 0 0 1316.00 594.90 L 1564.00 594.90" fill="none" stroke="#6ee7b7" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 1571.00 594.90 L 1564.00 598.05 L 1564.00 591.75 Z" fill="#6ee7b7" stroke="#6ee7b7" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 1684.00 656.50 L 1684.00 1012.50 A 10.00 10.00 0 0 1 1674.00 1022.50 L 1596.00 1022.50" fill="none" stroke="#6ee7b7" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 1589.00 1022.50 L 1596.00 1019.35 L 1596.00 1025.65 Z" fill="#6ee7b7" stroke="#6ee7b7" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 767.00 518.50 L 526.00 518.50 A 10.00 10.00 0 0 1 516.00 508.50 L 516.00 146.70 A 10.00 10.00 0 0 0 506.00 136.70 L 272.00 136.70" fill="none" stroke="#93c5fd" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 265.00 136.70 L 272.00 133.55 L 272.00 139.85 Z" fill="#93c5fd" stroke="#93c5fd" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 265.00 122.50 L 477.80 122.50 A 10.00 10.00 0 0 0 487.80 112.50 L 487.80 62.50 A 10.00 10.00 0 0 1 497.80 52.50 L 703.50 52.50" fill="none" stroke="#93c5fd" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 710.50 52.50 L 703.50 55.65 L 703.50 49.35 Z" fill="#93c5fd" stroke="#93c5fd" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 767.00 566.50 L 509.80 566.50 A 0.80 0.80 0 0 1 509.00 565.70 L 509.00 565.70 A 0.80 0.80 0 0 0 508.20 564.90 L 258.00 564.90" fill="none" stroke="#c4b5fd" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 251.00 564.90 L 258.00 561.75 L 258.00 568.05 Z" fill="#c4b5fd" stroke="#c4b5fd" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 904.00 602.50 L 904.00 811.50 A 10.00 10.00 0 0 1 894.00 821.50 L 814.00 821.50 A 10.00 10.00 0 0 0 804.00 831.50 L 804.00 1033.50" fill="none" stroke="#fda4af" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 804.00 1040.50 L 800.85 1033.50 L 807.15 1033.50 Z" fill="#fda4af" stroke="#fda4af" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <g data-shape="edge">
+    <path d="M 655.00 1092.50 L 494.00 1092.50 A 10.00 10.00 0 0 1 484.00 1082.50 L 484.00 1022.50 A 10.00 10.00 0 0 0 474.00 1012.50 L 320.00 1012.50" fill="none" stroke="#c4b5fd" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+    <path d="M 313.00 1012.50 L 320.00 1009.35 L 320.00 1015.65 Z" fill="#c4b5fd" stroke="#c4b5fd" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+  </g>
+  <text x="104.00" y="1347.40" fill="#475569" font-family="inherit" font-size="14" xml:space="preserve"><tspan font-weight="600.00">图 3 · 本体实例关系</tspan><tspan font-weight="400.00">：卡片 = 实体（首行实体名，其后是属性行）；线 = 关系；每条结论都必须能沿 Evidence 回指到原始日志。</tspan></text>
+  <text x="104.00" y="1381.40" fill="#b42318" font-family="inherit" font-size="11">缺口：Lane.adjacency 需要现场/图纸确认；Metric/Baseline 当前不存在，需新增；Anomaly 需从 anomalyType 升格为带根因与证据的实例。</text>
+</svg>

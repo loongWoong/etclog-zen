@@ -210,8 +210,45 @@ export function createBrakeController({ threshold = 0.45, stopSpeed = 0.2, stopH
   };
 }
 
-function hash(text) {
-  let value = 2166136261;
+/**
+ * 悬挂俯仰控制器：按「实际位移 / 时间」算速度与纵向加速度，驱动车头下沉（刹车）/抬起（加速）。
+ * 真实乘用车 0.5g 制动大约俯仰 1.5~2.5°，这里 4 m/s² 满偏、上限 maxPitchDeg，快进慢出不留抖动。
+ * 与刹车灯控制器用同一份位移输入（回放里就是每帧 z 位移），拖拽时间轴造成的突跳由调用方 reset。
+ */
+export function createSuspensionController({ maxPitchDeg = 2.2, fullAccel = 4.0, response = 5 } = {}) {
+  const full = (maxPitchDeg * Math.PI) / 180;
+  let speed = 0;
+  let accel = 0;
+  let pitch = 0;
+  return {
+    update(dt, distanceDelta) {
+      const step = Math.max(dt, 1e-3);
+      const next = distanceDelta / step;
+      const raw = (next - speed) / step;
+      speed = next;
+      accel += (raw - accel) * Math.min(1, step * response);
+      const want = Math.max(-1, Math.min(1, -accel / fullAccel)) * full;
+      pitch += (want - pitch) * Math.min(1, step * 9);
+      return pitch;
+    },
+    reset() {
+      speed = 0;
+      accel = 0;
+      pitch = 0;
+    },
+    get pitch() {
+      return pitch;
+    },
+    get accel() {
+      return accel;
+    },
+    get speed() {
+      return speed;
+    },
+  };
+}
+
+function hash(text) {  let value = 2166136261;
   for (let i = 0; i < text.length; i += 1) {
     value ^= text.charCodeAt(i);
     value = Math.imul(value, 16777619);
@@ -1024,6 +1061,28 @@ export function buildVehicleModel(spec, options = {}) {
   const contactShadow = createContactShadow(safe.dims, anchor);
   group.add(contactShadow);
 
+  // 悬挂俯仰的支点：**轴距中心**那条贴地线 —— 真实车是车身绕车轮中心转，加/减速时车头下沉或抬起。
+  // 车轮从枢轴里挪到 group 下（轴组局部坐标不用改：枢轴 +anchor、built 又 −anchor，正好抵消），
+  // 所以轮胎接地点一点不差；接地阴影与结果标记本来就在枢轴外，同样不跟着歪。
+  const axleZs = wheels.map((axle) => axle.position.z).filter((z) => Number.isFinite(z));
+  const pivotZ = axleZs.length ? (Math.min(...axleZs) + Math.max(...axleZs)) / 2 : anchor.z;
+  const halfSpread = axleZs.length
+    ? Math.max(0.8, (Math.max(...axleZs) - Math.min(...axleZs)) / 2)
+    : Math.max(0.8, safe.dims.length / 2);
+  const pitchPivot = new THREE.Group();
+  pitchPivot.name = "pitchPivot";
+  pitchPivot.position.set(anchor.x, 0, pivotZ);
+  group.remove(built);
+  built.position.set(built.position.x - anchor.x, built.position.y, built.position.z - pivotZ);
+  pitchPivot.add(built);
+  group.add(pitchPivot);
+  for (const axle of wheels) group.add(axle);
+
+  // 俯仰幅度按真实悬挂行程限制：车轮处最多升降 5cm，轴距越长俯仰角越小
+  // （轿车约 2.1°、12m 客车 0.7°、16.5m 半挂 0.4°），长车不会出现车头/挡泥板扎进路面。
+  const travelLimitDeg = (Math.atan(0.05 / halfSpread) * 180) / Math.PI;
+  const maxPitchDeg = Math.min(2.2, travelLimitDeg);
+
   // 结果标记：多车道页用它表达「放行/拦截/混合」，车身颜色保持真实配色
   const markerMaterial = new THREE.MeshBasicMaterial({ color: 0x49d17a, transparent: true, opacity: 0.92 });
   const marker = new THREE.Mesh(new THREE.OctahedronGeometry(0.28, 0), markerMaterial);
@@ -1051,6 +1110,11 @@ export function buildVehicleModel(spec, options = {}) {
     lights.setLevel(level);
   }
 
+  // 悬挂俯仰：弧度，正值 = 车头下沉（刹车）；见 createSuspensionController
+  function setPitch(radians) {
+    pitchPivot.rotation.x = Number.isFinite(radians) ? radians : 0;
+  }
+
   /** 换车/换页时释放这辆车自己的材质（几何与贴图是全局共享的，不在这里释放）。 */
   function dispose() {
     lights.dispose();
@@ -1059,8 +1123,8 @@ export function buildVehicleModel(spec, options = {}) {
   }
 
   return {
-    group, body, marker, markerMaterial, spec: safe, bodyColor, bodyColorSource, colors,
-    wheels, wheelRadius, spin, brakeLights: lights, setBrake, contactShadow, dispose,
+    group, body, pitchPivot, marker, markerMaterial, spec: safe, bodyColor, bodyColorSource, colors,
+    wheels, wheelRadius, spin, brakeLights: lights, setBrake, setPitch, maxPitchDeg, contactShadow, dispose,
   };
 }
 

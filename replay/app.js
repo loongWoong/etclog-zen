@@ -1,12 +1,13 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { createRenderer, createRenderLoop, detectGpu, frameInterval, mountGpuBadge } from "./render-runtime.js";
-import { BODY_COLOR_OPTIONS, buildVehicleModel, createBrakeController, setShadowTint, setSunDirection } from "./vehicle-models.js";
+import { BODY_COLOR_OPTIONS, buildVehicleModel, createBrakeController, createSuspensionController, setShadowTint, setSunDirection } from "./vehicle-models.js";
 import { addGroundHaze, applyRenderLook, applyShadowFlags, asphaltMaterial, createBloomPipeline, setupSky } from "./scene-look.js";
 import { buildDistantHorizon, buildLaneMarkings, buildScenery, hazardMaterial } from "./scenery.js";
 import { buildWeathering, groundRoughness } from "./weathering.js";
 import { addContactAO } from "./contact-ao.js";
 import { addPropShadows } from "./prop-shadows.js";
+import { buildMotion, stationsFrom } from "./lane-motion.js";
 import { BARRIER, createBarrierArm, easeInOut } from "./barrier-arm.js";
 
 // ---------------------------------------------------------------------------
@@ -29,6 +30,8 @@ const LANE_DEVICES = {
 
 const deviceInfo = { ...LANE_DEVICES };
 const LANE_DEVICE_KEYS = Object.keys(LANE_DEVICES);
+// 车道可行驶区间的入口（zMin=-35 再往里 3m）：没有位置证据时车就停在入口，不会凭空出现在车道中间
+const ENTRY_Z = -32;
 
 const scene = new THREE.Scene();
 
@@ -89,6 +92,14 @@ let speed = 1;
 let communicationBeam = null;
 let coilStates = new Map();
 let eventPositions = [];
+let motion = null;          // 本份日志的车辆运动曲线（见 lane-motion.js）
+let eventTimes = [];        // 每个事件的日志时刻（ms），解析不出来的为 NaN
+let timelineStops = [];     // [{t,i}] 只保留时刻可解析的事件，供"播放头 → 当前事件"二分查找
+let playheadMs = null;      // 播放头（绝对日志时间 ms）：车的位置 = motion.zAt(播放头)
+let lastPlayheadMs = null;  // 上一帧的播放头（算物理 dt = 日志时间差）
+// 1x 倍速下把整份日志播完的墙钟秒数。以前是"每帧推进一个事件"（约 8s 播完），
+// 意味着 0.05x~0.5x 这些档位全都退化成同一个速度；现在按日志时间连续推进，档位真实生效。
+const LOG_PLAY_SECONDS = 28;
 
 const coilInfo = {
   "1": { label: "车检器1", profile: "etc", z: -14.5, x: 0, color: 0x6ee7b7 },
@@ -605,7 +616,9 @@ function makeVehicle(spec = null, options = {}) {
   holder.userData.model = built;
   lastVehicleZ = null;
   brakeController = createBrakeController();
+  suspension = createSuspensionController({ maxPitchDeg: built.maxPitchDeg });
   built.setBrake(0);
+  built.setPitch(0);
   // 车辆自己也要有阴影角色（重建的模型不会走 buildScene 那次统一分配）
   applyShadowFlags(built.group);
   return holder;
@@ -799,23 +812,96 @@ function eventZCandidate(event, currentZ) {
   return null;
 }
 
+/**
+ * 车辆位置：只用「车确实到过」的位置事件（线圈占用 / 牌识 / 称重 / 轴型 / 读卡 / 天线）
+ * 做锚点，按日志时间排好序，位置取设备 z，再用限速求解时刻 —— 详见 lane-motion.js。
+ * 后台服务/流水/异常/别的车道的日志都不是位置证据。
+ */
 function buildEventPositions() {
-  let currentZ = -27;
-  eventPositions = replay.events.map((event) => {
-    const candidate = eventZCandidate(event, currentZ);
-    if (candidate !== null) {
-      currentZ = Math.max(currentZ, candidate);
-    }
-    return currentZ;
+  const events = replay.events || [];
+  const times = events.map((event) => Date.parse(String(event.time || "").replace(" ", "T")));
+  const usable = times.filter((value) => Number.isFinite(value));
+  eventTimes = times;
+  timelineStops = times.map((value, index) => ({ t: value, i: index })).filter((stop) => Number.isFinite(stop.t));
+  playheadMs = timelineStops.length ? timelineStops[0].t : null;
+  lastPlayheadMs = null;
+  if (!usable.length) {
+    eventPositions = events.map(() => ENTRY_Z);
+    motion = null;
+    return;
+  }
+  const laneCount = new Map();
+  events.forEach((event) => {
+    if (!event.lane) return;
+    const key = String(event.lane);
+    laneCount.set(key, (laneCount.get(key) || 0) + 1);
   });
+  const laneId = [...laneCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+  const stations = stationsFrom(deviceInfo, coilInfo, { rsuFront: -12.4, rsu: deviceInfo.rsu.z });
+  motion = buildMotion({
+    // 时间解析不出来的节点直接排除（不能拿 NaN 当时刻）
+    events: events.map((event, index) => ({ ...event, o: times[index] })).filter((event) => Number.isFinite(event.o)),
+    stations,
+    windowFrom: Math.min(...usable),
+    windowTo: Math.max(...usable),
+    zMin: -35,
+    zMax: 35,
+    laneId,
+  });
+  eventPositions = times.map((value, index) => (Number.isFinite(value) ? motion.zAt(value) : (eventPositions[index] ?? ENTRY_Z)));
 }
 
-function setEvent(index) {
+/** 播放头 → 当前事件下标：取最后一个"时刻 ≤ 播放头"的事件（时间解析不出来的事件跳过）。 */
+function eventIndexAt(ms) {
+  if (!timelineStops.length) return currentIndex;
+  if (!Number.isFinite(ms)) return timelineStops[0].i;
+  let low = 0;
+  let high = timelineStops.length - 1;
+  if (ms <= timelineStops[0].t) return timelineStops[0].i;
+  if (ms >= timelineStops[high].t) return timelineStops[high].i;
+  while (high - low > 1) {
+    const mid = (low + high) >> 1;
+    if (timelineStops[mid].t <= ms) low = mid;
+    else high = mid;
+  }
+  return timelineStops[low].i;
+}
+
+/**
+ * 把车放到「日志时刻 ms」对应的轨迹位置上（直接落点，不做缓动逼近）。
+ * 位置永远等于 motion.zAt(播放头)，于是"时间轴高亮哪个设备，车就在那个设备旁边"，
+ * 交给刹车灯/悬挂的位移也就是真实的。
+ * @returns {number} 车该在的 z
+ */
+function positionVehicle(ms) {
+  const car = vehicle();
+  const t = Number.isFinite(ms) ? ms : eventTimes[currentIndex];
+  const z = motion && motion.hasEvidence && Number.isFinite(t)
+    ? motion.zAt(t)
+    : (eventPositions[currentIndex] ?? ENTRY_Z);
+  if (car) car.position.z = z;
+  return z;
+}
+
+function setEvent(index, options = {}) {
   if (!replay || !replay.events.length) return;
   currentIndex = Math.max(0, Math.min(index, replay.events.length - 1));
   const event = replay.events[currentIndex];
-  const z = eventPositions[currentIndex] ?? -27;
-  vehicle().position.z = THREE.MathUtils.lerp(vehicle().position.z, z, 0.55);
+  const car = vehicle();
+  // 这份日志里一个位置事件都没有（全是后台服务/流水）时不要把车画在入口当幽灵
+  if (car) car.visible = Boolean(motion && motion.hasEvidence);
+  // 车直接落在「这个事件的日志时刻」的轨迹位置上：
+  // 这一步不再用 0.55 缓动逼近 —— 缓动会让车始终滞后于当前事件的设备位置，
+  // 而且缓动出来的速度/加速度不是物理量（刹车灯与悬挂俯仰都会被它带歪）。
+  if (options.place !== false && car) {
+    const stamp = eventTimes[currentIndex];
+    if (Number.isFinite(stamp)) playheadMs = stamp;
+    positionVehicle(playheadMs);
+    // 跳变不是行驶：把"上一帧位置 / 上一帧播放头"的传感器对齐到当前点，
+    // 否则跳过来这一下会被算成"一帧内跑了几十米"（刹车灯猛亮、悬挂猛沉）
+    lastVehicleZ = car.position.z;
+    lastPlayheadMs = playheadMs;
+  }
 
   deviceMeshes.forEach((item) => {
     item.pulse = 0;
@@ -1023,8 +1109,9 @@ const ANIM_SCRATCH_VECTOR = new THREE.Vector3();
 const ANIM_SCRATCH_VECTOR_B = new THREE.Vector3();
 let lastVehicleZ = null;
 let brakeController = createBrakeController();
+let suspension = createSuspensionController();
 
-// 车轮滚动 + 刹车灯：用本帧实际发生的 z 位移换算转角/速度（缓动、拖拽、播放都自然成立）
+// 车轮滚动 + 刹车灯 + 悬挂俯仰：用本帧实际发生的 z 位移换算转角/速度（缓动、拖拽、播放都自然成立）
 function spinVehicleWheels(dt) {
   const object = vehicle();
   if (!object) return;
@@ -1034,10 +1121,22 @@ function spinVehicleWheels(dt) {
   lastVehicleZ = object.position.z;
   if (Math.abs(delta) > 1e-4) model?.spin?.(delta);
   if (!model || !brakeController) return;
+  // 速度/加速度要用**日志时间**差来算：这份页面的车是按日志时刻定位的，
+  // 用墙钟 dt 会把"日志里 1 秒走了 12 米"算成"帧间 0.03 秒走了 12 米"（虚高几十倍）。
+  const logDt = Number.isFinite(playheadMs) && Number.isFinite(lastPlayheadMs)
+    ? Math.max(1e-3, (playheadMs - lastPlayheadMs) / 1000)
+    : Math.max(dt, 1e-3);
+  lastPlayheadMs = playheadMs;
   // 拖拽时间轴/跳事件会造成几米级的突跳：重置而不是当作急刹
-  if (Math.abs(delta) > 2.5) brakeController.reset();
-  else brakeController.update(Math.max(dt, 1e-3), delta);
+  if (Math.abs(delta) > 2.5) {
+    brakeController.reset();
+    suspension.reset();
+  } else {
+    brakeController.update(logDt, delta);
+    suspension.update(logDt, delta);
+  }
   model.setBrake?.(brakeController.level);
+  model.setPitch?.(suspension.pitch);
 }
 
 function stillAnimating() {
@@ -1051,13 +1150,32 @@ function stillAnimating() {
 
 function onFrame(dt) {
   if (playing && replay?.events.length) {
-    const next = currentIndex + Math.max(1, Math.floor(speed * dt * 2));
-    if (next >= replay.events.length) {
-      playing = false;
-      els.play.textContent = "播放";
-      setEvent(replay.events.length - 1);
+    // 连续推进"日志时间播放头"，由它决定当前事件与车辆位置：
+    // 车的位置 = motion.zAt(播放头)，所以时间轴高亮的设备时刻与车辆位置始终是一致的。
+    const first = timelineStops.length ? timelineStops[0].t : null;
+    const last = timelineStops.length ? timelineStops[timelineStops.length - 1].t : null;
+    if (first !== null && last !== null && last > first) {
+      if (!Number.isFinite(playheadMs)) playheadMs = first;
+      const rate = ((last - first) / (LOG_PLAY_SECONDS * 1000)) * speed;   // 每秒墙钟推进多少毫秒日志时间
+      playheadMs = Math.min(last, playheadMs + dt * 1000 * rate);
+      const index = eventIndexAt(playheadMs);
+      if (index !== currentIndex) setEvent(index, { place: false });
+      positionVehicle(playheadMs);
+      if (playheadMs >= last) {
+        playing = false;
+        els.play.textContent = "播放";
+        setEvent(timelineStops[timelineStops.length - 1].i);
+      }
     } else {
-      setEvent(next);
+      // 日志时刻全都解析不出来：退回"一帧一个事件"的老办法
+      const next = currentIndex + Math.max(1, Math.floor(speed * dt * 2));
+      if (next >= replay.events.length) {
+        playing = false;
+        els.play.textContent = "播放";
+        setEvent(replay.events.length - 1);
+      } else {
+        setEvent(next);
+      }
     }
   }
 
@@ -1186,12 +1304,67 @@ window.__REPLAY__ = {
     const event = replay && replay.events ? replay.events[currentIndex] : null;
     return event ? { index: currentIndex, time: event.time } : null;
   },
+  /** 自检用：车辆当前的 z / 悬挂俯仰 / 刹车灯 / 播放头（核对"刹车时车头低下去、且不越界"） */
+  vehicleState() {
+    const object = vehicle();
+    if (!object) return null;
+    const model = object.userData.model;
+    return {
+      z: Math.round(object.position.z * 1000) / 1000,
+      visible: object.visible,
+      passage: null,
+      playhead: Number.isFinite(playheadMs) ? playheadMs : null,
+      zWant: motion && motion.hasEvidence && Number.isFinite(playheadMs)
+        ? Math.round(motion.zAt(playheadMs) * 1000) / 1000
+        : null,
+      pitchDeg: suspension ? Math.round((suspension.pitch * 180) / Math.PI * 1000) / 1000 : 0,
+      maxPitchDeg: model && model.maxPitchDeg ? Math.round(model.maxPitchDeg * 1000) / 1000 : 0,
+      accel: suspension ? Math.round(suspension.accel * 1000) / 1000 : 0,
+      speed: suspension ? Math.round(suspension.speed * 1000) / 1000 : 0,
+      brake: brakeController ? Math.round(brakeController.level * 1000) / 1000 : 0,
+    };
+  },
   /** 自检用：直接走一遍 ?at= 的定位逻辑（返回值与页面内一致） */
   seekToClock(at) {
     return seekToClock(at);
   },
   setEvent,
   applyVehicle,
+  /** 自检用：某个事件下标对应的车位置（重建后的轨迹） */
+  eventZ(index) {
+    return eventPositions[index] ?? null;
+  },
+  /**
+   * 自检用：以固定步长"真的播一段"（走 onFrame 同一条路径：连续推进日志时间播放头），
+   * 返回逐帧的 z / 播放头 / 悬挂俯仰 / 刹车灯。量运动学量必须连续播放 ——
+   * 逐事件 setEvent 是跳变，会被当成急刹而 reset。
+   * @param {number} frames 帧数
+   * @param {number} stepMs 每帧墙钟毫秒
+   * @param {number} rate   倍速（1 = 整份日志约 LOG_PLAY_SECONDS 秒）
+   */
+  playFrames(frames = 120, stepMs = 33, rate = 1) {
+    if (!replay || !replay.events.length) return [];
+    const keepPlaying = playing;
+    const keepSpeed = speed;
+    playing = true;
+    speed = rate;
+    const samples = [];
+    for (let i = 0; i < frames; i += 1) {
+      onFrame(stepMs / 1000);
+      const state = window.__REPLAY__.vehicleState();
+      samples.push(Object.assign({ i }, state));
+      if (!playing) break;                        // 播到日志末尾就停
+    }
+    playing = keepPlaying;
+    speed = keepSpeed;
+    els.play.textContent = playing ? "暂停" : "播放";
+    LOOP?.hold(400);
+    return samples;
+  },
+  /** 自检用：1x 倍速下播完整份日志的墙钟秒数 */
+  get logPlaySeconds() {
+    return LOG_PLAY_SECONDS;
+  },
   get stats() {
     return LOOP ? { fps: LOOP.fps, spinning: LOOP.spinning, errors: LOOP.errorCount } : null;
   },
