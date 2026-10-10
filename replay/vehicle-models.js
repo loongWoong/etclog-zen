@@ -13,6 +13,32 @@
  */
 
 import * as THREE from "three";
+import { linearToSrgb, sunDirection, sunShadowFrame, SUN_ANGULAR_RADIUS } from "./scene-look.js";
+
+// ---------------------------------------------------------------------------
+// 太阳方向（页面 setupSky 之后由 setSunDirection 写进来）
+// ---------------------------------------------------------------------------
+
+/**
+ * 车辆接地阴影要跟太阳一致：影子朝背离太阳的一侧、影长 = cot(高度角) × 车高。
+ * 页面在 `setupSky` 之后调用它；不调用时会退回默认太阳（`sunDirection()`），
+ * 保证任何一页都不会出现"两拨影子方向不同"。
+ */
+let SUN_DIRECTION = null;
+export function setSunDirection(direction) {
+  SUN_DIRECTION = direction && direction.lengthSq() > 0 ? direction.clone().normalize() : null;
+}
+
+/**
+ * 影子里的地面还剩多少光（线性乘数，逐通道）：由 `setupSky` 按场景自己的灯算出来。
+ * 页面在 `setSunDirection` 之后紧接着调用它（必须在建车之前）。
+ */
+let SHADOW_TINT = new THREE.Color(0.12, 0.17, 0.25);      // 没有页面输入时的清空天空估算
+export function setShadowTint(color) {
+  if (!color) return;
+  SHADOW_TINT = new THREE.Color(color.r, color.g, color.b);   // 已经是线性值
+}
+
 
 // ---------------------------------------------------------------------------
 // 车牌颜色：部颁编码，已用本窗口 257 辆车交叉验证（货一蓝牌、货二/三黄牌、客一蓝/绿牌、大客黄牌）
@@ -52,7 +78,17 @@ const TEXTURE_CACHE = new Map();
 function paint(color) {
   const key = `paint:${color}`;
   if (!MATERIAL_CACHE.has(key)) {
-    MATERIAL_CACHE.set(key, new THREE.MeshStandardMaterial({ color, roughness: 0.38, metalness: 0.22 }));
+    // 车漆：金属漆 + 清漆层（clearcoat），配合 scene-look 的环境贴图才有真车反光
+    const material = new THREE.MeshPhysicalMaterial({
+      color,
+      roughness: 0.3,
+      metalness: 0.35,
+      clearcoat: 0.85,
+      clearcoatRoughness: 0.12,
+      envMapIntensity: 1.05,
+    });
+    material.userData.paint = true;
+    MATERIAL_CACHE.set(key, material);
   }
   return MATERIAL_CACHE.get(key);
 }
@@ -63,17 +99,116 @@ function material(key, options) {
 }
 
 const GLASS = () => material("glass", {
-  color: 0x0e1a24, roughness: 0.08, metalness: 0.45, transparent: true, opacity: 0.72, envMapIntensity: 1.2,
+  color: 0x0d1b26, roughness: 0.06, metalness: 0.42, transparent: true, opacity: 0.7, envMapIntensity: 1.8,
 });
-const CHROME = () => material("chrome", { color: 0xb9c2cb, roughness: 0.25, metalness: 0.85 });
-const DARK = () => material("dark", { color: 0x1b1f24, roughness: 0.7, metalness: 0.3 });
-const TIRE = () => material("tire", { color: 0x14171a, roughness: 0.9, metalness: 0.02 });
-const RIM = () => material("rim", { color: 0xa7b0b9, roughness: 0.35, metalness: 0.75 });
+const CHROME = () => material("chrome", { color: 0xbcc6cf, roughness: 0.22, metalness: 0.92, envMapIntensity: 1.6 });
+const DARK = () => material("dark", { color: 0x1b1f24, roughness: 0.68, metalness: 0.32 });
+const TIRE = () => material("tire", { color: 0x121417, roughness: 0.95, metalness: 0.0 });
+const RIM = () => material("rim", { color: 0xaeb7c1, roughness: 0.3, metalness: 0.85, envMapIntensity: 1.3 });
 const HEADLIGHT = () => material("headlight", { color: 0xfff6dc, emissive: 0xffe9a8, emissiveIntensity: 0.85, roughness: 0.2 });
 const TAILLIGHT = () => material("taillight", { color: 0x8c1b1b, emissive: 0xd8362c, emissiveIntensity: 0.75, roughness: 0.35 });
 const REFLECT_RED = () => material("reflectRed", { color: 0xb3241f, emissive: 0x521010, emissiveIntensity: 0.25, roughness: 0.4 });
 const REFLECT_WHITE = () => material("reflectWhite", { color: 0xe8edf2, emissive: 0x39424c, emissiveIntensity: 0.2, roughness: 0.4 });
 const AMBER = () => material("amber", { color: 0xffa41f, emissive: 0xff8c00, emissiveIntensity: 0.9, roughness: 0.4 });
+
+/** 刹车灯光晕贴图（加法混合 Sprite 用），全局一张。 */
+function glowTexture() {
+  if (!TEXTURE_CACHE.has("brakeGlow")) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gradient.addColorStop(0, "rgba(255,126,96,0.95)");
+    gradient.addColorStop(0.35, "rgba(255,64,40,0.42)");
+    gradient.addColorStop(1, "rgba(255,40,20,0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 64, 64);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    TEXTURE_CACHE.set("brakeGlow", texture);
+  }
+  return TEXTURE_CACHE.get("brakeGlow");
+}
+
+/**
+ * 一辆车自己的一套刹车灯：尾灯材质 + 尾部两个光晕 Sprite。
+ * 每辆车独立，所以踩下刹车时只有这一辆亮（尾灯材质不再全局共享）。
+ */
+function createBrakeLights() {
+  const tail = new THREE.MeshStandardMaterial({
+    color: 0x8c1b1b, emissive: 0xd8362c, emissiveIntensity: 0.32, roughness: 0.35,
+  });
+  tail.name = "brakeLight";
+  const glows = [];
+  const texture = glowTexture();
+  return {
+    tail,
+    glows,
+    add(group, x, y, z, width = 0.22, height = 0.16) {
+      group.add(box(width, height, 0.08, tail, x, y, z));
+      const material = new THREE.SpriteMaterial({
+        map: texture, color: 0xff3a24, transparent: true, opacity: 0.08,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const sprite = new THREE.Sprite(material);
+      sprite.position.set(x, y, z - 0.07);
+      sprite.scale.setScalar(0.72);
+      sprite.name = "brakeGlow";
+      group.add(sprite);
+      glows.push(sprite);
+    },
+    /** level: 0 = 只亮尾灯，1 = 刹车灯全亮（含光晕） */
+    setLevel(level) {
+      const amount = Math.max(0, Math.min(1, level));
+      tail.emissiveIntensity = 0.32 + 1.75 * amount;
+      tail.color.setHex(amount > 0.5 ? 0xbb2a20 : 0x8c1b1b);
+      for (const sprite of glows) {
+        sprite.material.opacity = 0.06 + 0.68 * amount;
+        sprite.scale.setScalar(0.72 + 0.62 * amount);
+      }
+    },
+    dispose() {
+      tail.dispose();
+      for (const sprite of glows) sprite.material.dispose();
+    },
+  };
+}
+
+/**
+ * 刹车灯控制器：按「实际位移 / 时间」算速度与加速度。
+ * 减速超过阈值时点亮；停住（等栏杆）后继续亮 stopHold 秒再熄灭（相当于松开刹车），
+ * 快速点亮、缓慢熄灭，避免闪烁。
+ */
+export function createBrakeController({ threshold = 0.45, stopSpeed = 0.2, stopHold = 2.5 } = {}) {
+  let speed = 0;
+  let level = 0;
+  let stillFor = 0;
+  return {
+    update(dt, distanceDelta) {
+      const step = Math.max(dt, 1e-3);
+      const next = distanceDelta / step;
+      const accel = (next - speed) / step;
+      speed = next;
+      if (Math.abs(next) < stopSpeed) stillFor += step;
+      else stillFor = 0;
+      const wants = accel < -threshold || (stillFor > 0 && stillFor < stopHold);
+      const target = wants ? 1 : 0;
+      const rate = wants ? 14 : 3.4;
+      const diff = target - level;
+      level += Math.sign(diff) * Math.min(Math.abs(diff), rate * step);
+      return level;
+    },
+    reset() {
+      speed = 0;
+      level = 0;
+      stillFor = 0;
+    },
+    get level() {
+      return level;
+    },
+  };
+}
 
 function hash(text) {
   let value = 2166136261;
@@ -174,6 +309,278 @@ function plateTexture(text, style) {
   return texture;
 }
 
+/** 接地阴影（AO）贴图：径向衰减的暗斑，全局一张，用车身尺寸拉伸。 */
+function contactTexture() {
+  if (!TEXTURE_CACHE.has("contact")) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext("2d");
+    const gradient = ctx.createRadialGradient(64, 64, 4, 64, 64, 62);
+    gradient.addColorStop(0, "rgba(8,10,14,0.78)");
+    gradient.addColorStop(0.55, "rgba(8,10,14,0.42)");
+    gradient.addColorStop(0.85, "rgba(8,10,14,0.12)");
+    gradient.addColorStop(1, "rgba(8,10,14,0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 128, 128);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    TEXTURE_CACHE.set("contact", texture);
+  }
+  return TEXTURE_CACHE.get("contact");
+}
+
+/**
+ * 车辆接地阴影贴图（有太阳方向时用）：把**真实影子的形状**画进贴图，并且画的是
+ * "影子里的地面还剩多少光"，而不是一块拍出来的深灰。
+ *
+ * 乘法混合：白 = 完全不变，色调 = 天光/(天光+直射太阳)（`setShadowTint` 由 `setupSky` 算好）。
+ * 于是影子的**颜色**是天空的颜色（偏蓝），**深浅**是直射被挡掉多少 —— 和接地暗部同一套混合。
+ *
+ * 真影子 = 车身矩形沿影子方向平移 `sweep` 之后的扫掠（Minkowski 和）。太阳有视半径，
+ * 所以整片是**均匀的影核**（地面在影子里看不见整个日面），只在边界外侧有一圈半影：
+ * 宽度 `penumbra ≈ 2 × 太阳视半径 × 车高/sin高度角`（4m 高的车约 8cm）。
+ * 没有画"从车底往影尖越来越淡"的渐变：那是美术处理，不是投影。
+ *
+ * 画布纵向 = 影子方向（v=0 在画布底边：贴图 flipY 之后 UV 的 v=0 对应画布底行），
+ * 横向 = 垂直影子方向。所有几何先在**米**里算完，最后一步才换算到画布像素，
+ * 这样"半影加宽"才是各向同性的（画布会被平面按不同比例拉伸）。
+ */
+function sweptShadowTexture(key, shape) {
+  if (TEXTURE_CACHE.has(key)) return TEXTURE_CACHE.get(key);
+  const { width, length, sweep, sinRel, cosRel, crossPlane, alongPlane, penumbra, tint } = shape;
+
+  // 车身矩形在"影子方向 c / 垂直方向 p"里的四个角：c 从车身占地中心量起
+  const corners = [];
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const x = (sx * width) / 2;
+      const z = (sz * length) / 2;
+      corners.push([x * sinRel + z * cosRel, x * cosRel - z * sinRel]);
+    }
+  }
+  // 扫掠 = 矩形 + 它沿 c 平移 sweep 的那一份，取 8 个点的凸包
+  const points = corners.concat(corners.map(([c, p]) => [c + sweep, p]));
+  const hull = convexHull(points);
+  const cMin = Math.min(...hull.map(([c]) => c));
+  const cMax = Math.max(...hull.map(([c]) => c));
+  const pMin = Math.min(...hull.map(([, p]) => p));
+  const pMax = Math.max(...hull.map(([, p]) => p));
+  const centre = [(cMin + cMax) / 2, (pMin + pMax) / 2];
+  const spanC = Math.max(0.2, cMax - cMin);
+  const spanP = Math.max(0.2, pMax - pMin);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  // 画布比例跟着平面走，texel 密度才一致（半挂那片有 16m 长）
+  canvas.height = Math.max(96, Math.min(512, Math.round((256 * alongPlane) / Math.max(1, crossPlane))));
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width;
+  const H = canvas.height;
+  const toPx = (c, p) => [((p + crossPlane / 2) / crossPlane) * W,
+                          (1 - (c - sweep / 2 + alongPlane / 2) / alongPlane) * H];
+
+  // 白底：乘法混合下"完全不变"。形状之外只可能是白，别的地方不压暗。
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, W, H);
+
+  // 覆盖度 → 画布颜色：物理上是**线性**混合 `(1-k)·天光 + k·全影`，
+  // 画布是 sRGB 的，所以按 sRGB 编码写进去（否则半影带会比物理值暗一截）。
+  const coverageColor = (k) => {
+    const parts = [tint.r, tint.g, tint.b].map((t) => t * k + (1 - k));
+    return `rgb(${parts.map((v) => Math.round(linearToSrgb(v) * 255)).join(",")})`;
+  };
+
+  // 半影：在**米**里把多边形往外推几圈，一圈比一圈实（太阳视半径摊开的量）。
+  // 两轴各自按"离中心的距离 + grow"换算缩放，这样长轴也是实打实外推 grow 米——
+  // 用一个统一比例的话，18m 长的车长轴会一下撑出两米多的虚边（横向还很窄）。
+  const draw = (grow, coverage) => {
+    const sc = 1 + (grow * 2) / spanC;
+    const sp = 1 + (grow * 2) / spanP;
+    ctx.beginPath();
+    hull.forEach(([c, p], i) => {
+      const cc = centre[0] + (c - centre[0]) * sc;
+      const pp = centre[1] + (p - centre[1]) * sp;
+      const [x, y] = toPx(cc, pp);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = coverageColor(coverage);
+    ctx.fill();
+  };
+  draw(penumbra, 0.25);
+  draw(penumbra * 0.66, 0.5);
+  draw(penumbra * 0.33, 0.75);
+  draw(0, 1);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  // 乘法贴图要的是"线性乘数"，画布按 sRGB 编的，所以标 sRGB 让 three 解回来（解出来正好是物理乘数）
+  texture.colorSpace = THREE.SRGBColorSpace;
+  // 这张图是**按哪一套几何**画出来的，一并记下：贴图按整数度缓存，转台一直在转，
+  // 所以"当前这一帧的方案"与"图里那一版形状"可以差半度。自检要拿图自己的形状去对，
+  // 不能拿当前帧的方案去对一个早先画好的图（那不是贴图错，是刻舟求剑）。
+  texture.userData = {
+    shape: {
+      width, length, sweep, sinRel, cosRel, crossPlane, alongPlane, penumbra,
+      tint: [tint.r, tint.g, tint.b],
+    },
+  };
+  TEXTURE_CACHE.set(key, texture);
+  return texture;
+}
+
+/** 单调链凸包：扫掠形状的点只有 8 个，够用且没有依赖。 */
+function convexHull(points) {
+  const pts = points.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const build = (list) => {
+    const out = [];
+    for (const p of list) {
+      while (out.length >= 2 && cross(out[out.length - 2], out[out.length - 1], p) <= 0) out.pop();
+      out.push(p);
+    }
+    return out;
+  };
+  const lower = build(pts);
+  const upper = build(pts.slice().reverse());
+  return lower.slice(0, -1).concat(upper.slice(0, -1));
+}
+
+/**
+ * 按当前太阳与车体实际朝向摆好这片阴影。
+ *
+ * 为什么每帧都要重算：车头一旦转（展台转台一直在转、以后车道若要按方向掉头），
+ * 挂在车体下的这片平面会跟着转，而**太阳不会跟着转**。所以要在局部坐标系里把转角反向补回来，
+ * 保证影子的世界朝向始终是"背离太阳"。
+ */
+function orientShadow(mesh, dims, anchor) {
+  const frame = sunShadowFrame(SUN_DIRECTION || sunDirection());
+  if (!frame) return;
+  const parent = mesh.parent;
+  let yaw = 0;
+  if (parent) {
+    parent.updateWorldMatrix(true, false);
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(parent.getWorldQuaternion(new THREE.Quaternion()));
+    yaw = Math.atan2(forward.x, forward.z);          // 车头在世界里的方位角
+  }
+  const rel = Math.atan2(frame.x, frame.z) - yaw;
+  const dirX = Math.sin(rel);                      // 注意：这是**车体局部**坐标系里的影子方向
+  const dirZ = Math.cos(rel);
+  const height = Math.max(0.4, dims.height);
+  const sweep = frame.cot * height;                                   // 车顶在地面上的位移
+  const proj = Math.abs(dims.width * dirX) + Math.abs(dims.length * dirZ);   // 车身在影子方向上的跨度
+  const cross = Math.abs(dims.width * dirZ) + Math.abs(dims.length * dirX);  // 垂直方向的跨度
+  const along = proj + sweep;
+  // 太阳视半径摊到地面上的半影宽度：`2 × 视半径 × (车高 / sin高度角)`，再加上一点点
+  // 车身圆角/贴图分辨率带来的软边（0.04m）。4.05m 的半挂 ≈ 8cm，1.5m 的轿车 ≈ 5.6cm。
+  const sinElev = 1 / Math.sqrt(1 + frame.cot * frame.cot);
+  const penumbra = THREE.MathUtils.clamp(0.04 + (2 * SUN_ANGULAR_RADIUS * height) / Math.max(0.2, sinElev), 0.05, 0.14);
+  const crossPlane = cross + penumbra * 2;
+  const alongPlane = along + penumbra * 2;
+  // 平面局部 +Y 要指向影子方向：rotation.x=-90° 之后局部 +Y 落到 -Z，再转 z 角即可对齐
+  mesh.rotation.set(-Math.PI / 2, 0, Math.atan2(-dirX, -dirZ));
+  mesh.scale.set(crossPlane, alongPlane, 1);
+  // 贴图按这辆车的真实扫掠形状生成（缓存键带上尺寸/相对角/影长/影色，同款车只画一次）
+  const shape = {
+    width: dims.width, length: dims.length, sweep, sinRel: Math.sin(rel), cosRel: Math.cos(rel),
+    crossPlane, alongPlane, penumbra, tint: SHADOW_TINT,
+  };
+  const tintKey = `${SHADOW_TINT.r.toFixed(3)},${SHADOW_TINT.g.toFixed(3)},${SHADOW_TINT.b.toFixed(3)}`;
+  const texKey = `swept:${dims.width.toFixed(2)}:${dims.length.toFixed(2)}:${Math.round(THREE.MathUtils.radToDeg(rel))}:${frame.cot.toFixed(3)}:${tintKey}`;
+  if (mesh.userData.shadowTexKey !== texKey) {
+    mesh.material.map = sweptShadowTexture(texKey, shape);
+    mesh.material.needsUpdate = true;
+    mesh.userData.shadowTexKey = texKey;
+  }
+  // 整片沿影子方向平移 sweep/2：近端贴着车身背光边，远端正好是车顶影子。
+  // 平移量必须用**局部**方向：这片是车体的子节点，车头一转，世界方向就跟着转了。
+  // anchor 是车身实际占地中心（挂在车体组原点上的东西，几何中心未必在那里：
+  // 半挂的车体大多长在 +Z 一侧，直接用原点当基准，影子会整片挪到车厢外面去）。
+  mesh.position.set((anchor ? anchor.x : 0) + (dirX * sweep) / 2, 0.011, (anchor ? anchor.z : 0) + (dirZ * sweep) / 2);
+  // 自检要核对：影子朝哪、影长是不是 cot×车高
+  mesh.userData.shadowPlan = {
+    cot: Math.round(frame.cot * 1000) / 1000,
+    height: Math.round(height * 100) / 100,
+    sweep: Math.round(sweep * 100) / 100,
+    proj: Math.round(proj * 100) / 100,
+    cross: Math.round(cross * 100) / 100,
+    along: Math.round(along * 100) / 100,
+    crossPlane: Math.round(crossPlane * 100) / 100,
+    alongPlane: Math.round(alongPlane * 100) / 100,
+    penumbra: Math.round(penumbra * 1000) / 1000,
+    tint: [Math.round(SHADOW_TINT.r * 1000) / 1000, Math.round(SHADOW_TINT.g * 1000) / 1000,
+           Math.round(SHADOW_TINT.b * 1000) / 1000],
+    width: Math.round(dims.width * 100) / 100,
+    length: Math.round(dims.length * 100) / 100,
+    // 真影子面积 = 车身矩形 + 沿影子方向扫出去的一条（宽度取垂直方向跨度）
+    areaTrue: Math.round((dims.width * dims.length + sweep * cross) * 100) / 100,
+    areaRect: Math.round(along * cross * 100) / 100,
+    shadowDir: [Math.round(frame.x * 1000) / 1000, Math.round(frame.z * 1000) / 1000],
+    // 平移量的世界方向（把局部平移按车头转角转回去）：应当与 shadowDir 同向
+    offsetWorldDir: [Math.round(Math.sin(rel + yaw) * 1000) / 1000, Math.round(Math.cos(rel + yaw) * 1000) / 1000],
+    anchor: [Math.round((anchor ? anchor.x : 0) * 100) / 100, Math.round((anchor ? anchor.z : 0) * 100) / 100],
+    relDeg: Math.round(THREE.MathUtils.radToDeg(rel) * 10) / 10,
+    yawDeg: Math.round(THREE.MathUtils.radToDeg(yaw) * 10) / 10,
+  };
+  return mesh.userData.shadowPlan;
+}
+
+/**
+ * 接地阴影：贴地一片暗斑，保证车"踩在地上"而不是悬空（没有 GPU 的机器上太阳阴影是关掉的）。
+ *
+ * 有太阳方向时按真实投影铺开：真扫掠形状 + 由场景自己的灯算出来的天光/直射比例，
+ * 用**乘法混合**盖在路面上（白=不变，影色=影子里剩下的天光）。于是影子的深浅与冷暖
+ * 都来自这套光照，而不是手调一个深灰——半挂会拖出比轿车长得多的一条影子。
+ */
+function createContactShadow(dims, anchor) {
+  const frame = sunShadowFrame(SUN_DIRECTION || sunDirection());
+  if (!frame) {
+    // 太阳正顶（没有水平分量）：退回一片对称暗斑，至少让车不悬空
+    const material = new THREE.MeshBasicMaterial({
+      map: contactTexture(), color: 0x14171c, transparent: true, opacity: 0.62, depthWrite: false,
+    });
+    const key = "contactPlane";
+    if (!GEOMETRY_CACHE.has(key)) GEOMETRY_CACHE.set(key, new THREE.PlaneGeometry(1, 1));
+    const mesh = new THREE.Mesh(GEOMETRY_CACHE.get(key), material);
+    mesh.name = "contactShadow";
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.scale.set(Math.max(1.3, dims.width * 1.5), Math.max(2, dims.length * 1.08), 1);
+    mesh.position.set(anchor ? anchor.x : 0, 0.011, anchor ? anchor.z : 0);
+    mesh.renderOrder = 1;
+    mesh.userData.noShadow = true;
+    return mesh;
+  }
+
+  // 乘法混合：片元颜色直接当"乘数"。所以
+  //   · 底色必须是白（白=完全不变），形状与半影都画在贴图里；
+  //   · toneMapped:false —— 否则 multiplier 自己先过一次 ACES，乘到地面上就不是物理比例了；
+  //   · fog:false —— 雾会把片元往雾色混，乘法片一旦被雾改色就整片变成"无差别压暗"。
+  const material = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    blending: THREE.MultiplyBlending,
+    transparent: true,
+    depthWrite: false,
+    fog: false,
+    toneMapped: false,
+  });
+  const key = "contactPlane";
+  if (!GEOMETRY_CACHE.has(key)) GEOMETRY_CACHE.set(key, new THREE.PlaneGeometry(1, 1));
+  const mesh = new THREE.Mesh(GEOMETRY_CACHE.get(key), material);
+  mesh.name = "contactShadow";
+  mesh.renderOrder = 1;
+  mesh.userData.noShadow = true;
+  orientShadow(mesh, dims, anchor);               // 建好就先摆一次（此时父级可能还没进场景，yaw 按 0 算）
+  // 车头一转（展台转台一直在转）就跟着修正，不需要页面配合。
+  // onBeforeRender 在 updateMatrixWorld 之后、上传 uniform 之前跑，所以这里顺手把矩阵也刷新掉，
+  // 否则这一帧用的还是上一帧的朝向（转台上会看到影子比车身慢半拍）。
+  mesh.onBeforeRender = () => {
+    orientShadow(mesh, dims, anchor);
+    mesh.updateMatrix();
+    if (mesh.parent) mesh.matrixWorld.multiplyMatrices(mesh.parent.matrixWorld, mesh.matrix);
+  };
+  return mesh;
+}
+
 function plate(text, colorCode, width = 0.44, height = 0.15) {
   const style = PLATE_STYLE[colorCode] || PLATE_FALLBACK;
   const material = new THREE.MeshStandardMaterial({
@@ -234,32 +641,47 @@ function axleLayout(kind, dims, axles, wheelbase) {
   }
 }
 
-function addTailDetails(group, dims, rearZ, y = 0.85) {
-  group.add(box(0.22, 0.16, 0.08, TAILLIGHT(), -dims.width / 2 + 0.22, y, rearZ));
-  group.add(box(0.22, 0.16, 0.08, TAILLIGHT(), dims.width / 2 - 0.22, y, rearZ));
+function addTailDetails(group, dims, rearZ, y = 0.85, lights = null) {
+  for (const side of [-1, 1]) {
+    const x = side * (dims.width / 2 - 0.22);
+    if (lights) lights.add(group, x, y, rearZ);
+    else group.add(box(0.22, 0.16, 0.08, TAILLIGHT(), x, y, rearZ));
+  }
 }
 
-function addAxle(group, z, dims, radius, width, dual) {
+/**
+ * 装一根轴：返回的 axle 组原点就在车轮中心线上，绕 X 旋转即为车轮滚动。
+ * @param {THREE.Group} group 车辆组
+ * @param {number} z 轴在车辆坐标系里的 z
+ * @param {boolean} dual 后轴双胎
+ * @param {THREE.Group[]=} collector 收集轴组，供播放时驱动转动
+ */
+function addAxle(group, z, dims, radius, width, dual, collector) {
+  const axle = new THREE.Group();
+  axle.name = `axle@${z.toFixed(2)}`;
+  axle.position.set(0, radius, z);
+  axle.userData.radius = radius;
   const wheelGroup = wheel(radius, width, { dual });
-  wheelGroup.position.set(0, radius, z);
   const left = wheelGroup.clone();
-  left.position.x = -dims.width / 2 + width * (dual ? 0.72 : 0.42);
+  left.position.set(-dims.width / 2 + width * (dual ? 0.72 : 0.42), 0, 0);
   const right = wheelGroup.clone();
-  right.position.x = dims.width / 2 - width * (dual ? 0.72 : 0.42);
-  group.add(left, right);
+  right.position.set(dims.width / 2 - width * (dual ? 0.72 : 0.42), 0, 0);
+  axle.add(left, right);
+  group.add(axle);
   for (const side of [-1, 1]) {
     const flap = mudflap(width * (dual ? 1.7 : 1.1));
     flap.position.set(side * (dims.width / 2 - width * 0.5), 0.2, z - radius - 0.25);
     group.add(flap);
   }
-  return wheelGroup;
+  if (collector) collector.push(axle);
+  return axle;
 }
 
-function buildWheels(group, kind, dims, axles, wheelbase, radius, width) {
+function buildWheels(group, kind, dims, axles, wheelbase, radius, width, collector) {
   const layout = axleLayout(kind, dims, axles, wheelbase);
   const heavy = kind.startsWith("semi") || kind === "rigid3" || kind === "rigid4" || kind === "mediumTruck";
   layout.forEach((z, index) => {
-    addAxle(group, z, dims, radius, width, heavy ? index > 0 : false);
+    addAxle(group, z, dims, radius, width, heavy ? index > 0 : false, collector);
   });
   return layout;
 }
@@ -352,7 +774,7 @@ function addDangerPlacard(group, dims) {
 // 各族车身
 // ---------------------------------------------------------------------------
 
-function buildPassenger(spec, colors, plateFront, plateRear) {
+function buildPassenger(spec, colors, plateFront, plateRear, wheels = [], lights = null) {
   const { length: L, width: W, height: H } = spec.dims;
   const group = new THREE.Group();
   const seed = hash(spec.plate || spec.classLabel || "x");
@@ -402,7 +824,7 @@ function buildPassenger(spec, colors, plateFront, plateRear) {
     group.add(arm);
   }
   group.add(box(W * 0.9, 0.16, 0.12, DARK(), 0, 0.42, L / 2 - 0.04));
-  addTailDetails(group, { width: W }, -L / 2 - 0.02);
+  addTailDetails(group, { width: W }, -L / 2 - 0.02, 0.85, lights);
 
   const obu = box(0.12, 0.06, 0.09, DARK(), 0, H * 0.86, L * 0.16);
   obu.name = "obuUnit";
@@ -417,11 +839,11 @@ function buildPassenger(spec, colors, plateFront, plateRear) {
     plateFront.position.set(0, 0.44, L / 2 + 0.03);
     group.add(plateFront);
   }
-  buildWheels(group, spec.kind, spec.dims, spec.axles, spec.dims.wheelbase, wheelRadius, 0.24);
+  buildWheels(group, spec.kind, spec.dims, spec.axles, spec.dims.wheelbase, wheelRadius, 0.24, wheels);
   return group;
 }
 
-function buildTruck(spec, colors, plateFront, plateRear) {
+function buildTruck(spec, colors, plateFront, plateRear, wheels = [], lights = null) {
   const { length: L, width: W, height: H } = spec.dims;
   const group = new THREE.Group();
   const cabLength = Math.min(2.3, Math.max(1.6, L * 0.2));
@@ -464,17 +886,17 @@ function buildTruck(spec, colors, plateFront, plateRear) {
     const tractorAxles = spec.kind === "semi6"
       ? [tractorLength / 2 - 1.25, -tractorLength / 2 + 0.85, -tractorLength / 2 + 2.2]
       : [tractorLength / 2 - 1.3, -tractorLength / 2 + 1.05];
-    tractorAxles.forEach((z, index) => addAxle(group, z, spec.dims, wheelRadius, 0.3, index > 0));
+    tractorAxles.forEach((z, index) => addAxle(group, z, spec.dims, wheelRadius, 0.3, index > 0, wheels));
     const trailerAxleCount = Math.max(1, spec.axles - tractorAxles.length);
     for (let index = 0; index < trailerAxleCount; index += 1) {
-      addAxle(group, trailer.position.z - trailerLength / 2 + 0.95 + index * 1.35, spec.dims, wheelRadius, 0.3, true);
+      addAxle(group, trailer.position.z - trailerLength / 2 + 0.95 + index * 1.35, spec.dims, wheelRadius, 0.3, true, wheels);
     }
     if (plateRear) {
       plateRear.position.set(0, 0.6, -L / 2 - 0.22);
       plateRear.rotation.y = Math.PI;
       group.add(plateRear);
     }
-    addTailDetails(group, { width: W }, -L / 2 - 0.05, 0.95);
+    addTailDetails(group, { width: W }, -L / 2 - 0.05, 0.95, lights);
     if (spec.dangerous) addDangerPlacard(group, spec.dims);
     return group;
   }
@@ -506,21 +928,23 @@ function buildTruck(spec, colors, plateFront, plateRear) {
     group.add(plateRear);
   }
   if (spec.dangerous) addDangerPlacard(group, { length: L, width: W });
-  buildTruckDetailLighting(group, { width: W }, -L / 2, 1.0);
-  buildWheels(group, spec.kind, spec.dims, spec.axles, spec.dims.wheelbase, wheelRadius, 0.28);
+  buildTruckDetailLighting(group, { width: W }, -L / 2, 1.0, lights);
+  buildWheels(group, spec.kind, spec.dims, spec.axles, spec.dims.wheelbase, wheelRadius, 0.28, wheels);
   return group;
 }
 
-function buildTruckDetailLighting(group, dims, rearZ, y) {
+function buildTruckDetailLighting(group, dims, rearZ, y, lights = null) {
   for (const side of [-1, 1]) {
-    group.add(box(0.22, 0.5, 0.1, TAILLIGHT(), side * (dims.width / 2 - 0.24), y, rearZ - 0.12));
+    const x = side * (dims.width / 2 - 0.24);
+    if (lights) lights.add(group, x, y, rearZ - 0.12, 0.6, 0.5);
+    else group.add(box(0.22, 0.5, 0.1, TAILLIGHT(), x, y, rearZ - 0.12));
   }
 }
 
-function buildSpecial(spec, colors, plateFront, plateRear) {
+function buildSpecial(spec, colors, plateFront, plateRear, wheels = [], lights = null) {
   // 专项作业车按真实轴数选底盘：2 轴 → 单车底盘，5/6 轴 → 半挂底盘
   const baseKind = spec.axles <= 2 ? "mediumTruck" : spec.axles === 3 ? "rigid3" : spec.axles === 4 ? "rigid4" : "semi6";
-  const group = buildTruck({ ...spec, kind: baseKind, payload: "box" }, colors, plateFront, plateRear);
+  const group = buildTruck({ ...spec, kind: baseKind, payload: "box" }, colors, plateFront, plateRear, wheels, lights);
   addBeacons(group, spec.dims, Math.max(1.6, spec.dims.height * 0.96));
   for (const z of [-spec.dims.length * 0.2, spec.dims.length * 0.25]) {
     group.add(box(0.16, 0.5, 0.16, DARK(), -spec.dims.width / 2 - 0.1, 0.35, z));
@@ -532,7 +956,8 @@ function buildSpecial(spec, colors, plateFront, plateRear) {
 /**
  * 构建一辆车。
  * @returns {{group: THREE.Group, body: THREE.Object3D|null, marker: THREE.Mesh, spec: object,
- *            bodyColor: string, bodyColorSource: string}}
+ *            bodyColor: string, bodyColorSource: string, wheels: THREE.Group[], wheelRadius: number,
+ *            spin: (distance: number) => void, setBrake: (level: number) => void, dispose: () => void}}
  */
 export function buildVehicleModel(spec, options = {}) {
   const detail = options.detail !== false;
@@ -575,12 +1000,24 @@ export function buildVehicleModel(spec, options = {}) {
   const plateFront = detail ? plate(safe.plate, plateStyle) : null;
   const plateRear = detail ? plate(safe.plate, plateStyle) : null;
 
+  const wheels = [];
+  const lights = createBrakeLights();
   const built = safe.kind === "special"
-    ? buildSpecial(safe, colors, plateFront, plateRear)
+    ? buildSpecial(safe, colors, plateFront, plateRear, wheels, lights)
     : isTruck
-      ? buildTruck(safe, colors, plateFront, plateRear)
-      : buildPassenger(safe, colors, plateFront, plateRear);
+      ? buildTruck(safe, colors, plateFront, plateRear, wheels, lights)
+      : buildPassenger(safe, colors, plateFront, plateRear, wheels, lights);
   group.add(built);
+
+  // 接地阴影：太阳阴影被关掉（软件渲染）时也能看出车在地面上，且方向/长度跟着太阳走。
+  // 基准用**车体实际占地中心**：车体组原点常在车头/挂车一端，半挂会因此把影子整片挪到车厢外。
+  const bodyBox = new THREE.Box3().setFromObject(built);
+  group.updateWorldMatrix(true, false);
+  bodyBox.applyMatrix4(group.matrixWorld.clone().invert());       // 换算回车体局部的占地范围
+  const anchor = { x: (bodyBox.min.x + bodyBox.max.x) / 2, z: (bodyBox.min.z + bodyBox.max.z) / 2 };
+  if (!Number.isFinite(anchor.x) || !Number.isFinite(anchor.z)) { anchor.x = 0; anchor.z = 0; }   // 空车体：退回原点
+  const contactShadow = createContactShadow(safe.dims, anchor);
+  group.add(contactShadow);
 
   // 结果标记：多车道页用它表达「放行/拦截/混合」，车身颜色保持真实配色
   const markerMaterial = new THREE.MeshBasicMaterial({ color: 0x49d17a, transparent: true, opacity: 0.92 });
@@ -592,13 +1029,34 @@ export function buildVehicleModel(spec, options = {}) {
 
   let body = null;
   group.traverse((child) => {
-    if (!body && child.isMesh && child.material && child.material.color && child.material.type === "MeshStandardMaterial"
-      && child.material.roughness === 0.38) {
+    if (!body && child.isMesh && child.material && child.material.userData && child.material.userData.paint) {
       body = child;
     }
   });
 
-  return { group, body, marker, markerMaterial, spec: safe, bodyColor, bodyColorSource, colors };
+  // 车轮滚动：按行驶距离换算转角，速度由调用方给（回放里就是每帧 z 位移）
+  const wheelRadius = (wheels[0] && wheels[0].userData.radius) || 0.42;
+  function spin(distance) {
+    const delta = distance / wheelRadius;
+    for (const axle of wheels) axle.rotation.x += delta;
+  }
+
+  // 刹车灯：level 0..1，由调用方按速度/减速度驱动（见 createBrakeController）
+  function setBrake(level) {
+    lights.setLevel(level);
+  }
+
+  /** 换车/换页时释放这辆车自己的材质（几何与贴图是全局共享的，不在这里释放）。 */
+  function dispose() {
+    lights.dispose();
+    markerMaterial.dispose();
+    contactShadow.material.dispose();
+  }
+
+  return {
+    group, body, marker, markerMaterial, spec: safe, bodyColor, bodyColorSource, colors,
+    wheels, wheelRadius, spin, brakeLights: lights, setBrake, contactShadow, dispose,
+  };
 }
 
 /** 车身颜色候选（手动指定用）。 */

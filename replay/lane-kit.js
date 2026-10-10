@@ -2,6 +2,10 @@
 // 供多车道过程视图复用。几何与静态材质按尺寸/颜色缓存，8 条车道同屏时不会重复申请显存。
 import * as THREE from "three";
 import { buildVehicleModel } from "./vehicle-models.js";
+import { asphaltMaterial } from "./scene-look.js";
+import { buildLaneMarkings, hazardMaterial } from "./scenery.js";
+import { groundRoughness } from "./weathering.js";
+import { createBarrierArm } from "./barrier-arm.js";
 
 // ---------------------------------------------------------------------------
 // 尺寸表：与 app.js 的 LANE_DEVICES / coilInfo 一一对应（z 以车道中心为原点）
@@ -275,23 +279,26 @@ export function buildDevice(key) {
   }
 
   if (info.kind === "barrier") {
-    const group = new THREE.Group();
-    const base = box(0.55, 0.9, 0.55, 0x313946);
-    base.position.set(0, 0.67, 0);
-    const pivot = new THREE.Group();
-    pivot.position.set(0, 1.12, 0);
-    pivot.name = "barrierPivot";
-    const arm = liveBox(6.2, 0.12, 0.12, 0xeb5757);
-    arm.position.set(-3.1, 0, 0);
-    const tip = box(0.12, 0.36, 0.36, 0xf4f6f8);
-    tip.position.set(-6.05, 0, 0);
-    pivot.add(arm, tip);
-    group.add(base, pivot);
+    // 道闸的外观与动作统一在 barrier-arm.js 里（红白相间直臂 + 配重 + 黄闪灯 + 真实行程）
+    const built = createBarrierArm({
+      pivotName: "barrierPivot",
+      armColor: 0xeb5757,
+      lampColor: 0xf2c94c,
+    });
+    const group = built.group;
     const label = makeLabel(info.label);
     label.position.set(0.2, 1.95, 0);
     group.add(label);
     group.position.set(info.x, 0, info.z);
-    return { group, body: arm, pivot, baseColor: info.color };
+    return {
+      group,
+      body: built.arm,
+      pivot: built.pivot,
+      tip: built.tip,
+      lamp: built.lamp,
+      setLamp: built.setLamp,
+      baseColor: info.color,
+    };
   }
 
   return null;
@@ -370,9 +377,14 @@ export function buildArrowField(positions) {
 export function buildLaneSite({ id, sub, details = true, vehicle = null }) {
   const group = new THREE.Group();
 
-  // 路面
-  const road = box(LAYOUT.roadWidth, 0.08, LAYOUT.roadLength, COLORS.road, { roughness: 1 });
+  // 路面：沥青颗粒贴图（每个车道现场一份材质实例，纹理按米重复；粗糙度图给出轮迹磨光与积水反光）
+  const road = new THREE.Mesh(
+    new THREE.BoxGeometry(LAYOUT.roadWidth, 0.08, LAYOUT.roadLength),
+    asphaltMaterial({ color: "#5b626b", repeat: [3, 34], roughness: 0.9, bump: 0.3, roughnessMap: groundRoughness([1, 12]) }),
+  );
   road.position.set(0, -0.04, 0);
+  road.receiveShadow = true;
+  road.name = "laneRoad";
   group.add(road);
 
   const fine = new THREE.Group();
@@ -393,6 +405,9 @@ export function buildLaneSite({ id, sub, details = true, vehicle = null }) {
   shoulderR.position.x = LAYOUT.shoulderX;
   fine.add(shoulderL, shoulderR);
 
+  // 两侧边线 + 停止线 + 轮胎磨损痕（与 index.html 同一套，见 scenery.js）
+  fine.add(buildLaneMarkings({ roadWidth: LAYOUT.roadWidth, roadLength: LAYOUT.roadLength }));
+
   // 收费岛
   const island = box(LAYOUT.island.width, LAYOUT.island.height, LAYOUT.island.length, COLORS.island, { roughness: 0.9 });
   island.position.set(LAYOUT.island.x, 0.08, LAYOUT.island.z);
@@ -404,6 +419,16 @@ export function buildLaneSite({ id, sub, details = true, vehicle = null }) {
     cap.rotation.x = Math.PI / 2;
     cap.position.set(LAYOUT.island.x, 0.1, z);
     group.add(cap);
+  }
+  // 岛头黄黑警示条纹
+  const hazards = hazardMaterial({ repeat: [2, 1] });
+  for (const z of LAYOUT.island.capZ) {
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(LAYOUT.island.width * 0.92, 0.24, 0.55), hazards);
+    stripe.name = "islandHazard";
+    stripe.position.set(LAYOUT.island.x, 0.13, z + (z < LAYOUT.island.z ? 0.34 : -0.34));
+    stripe.castShadow = true;
+    stripe.receiveShadow = true;
+    group.add(stripe);
   }
 
   // 收费亭
@@ -453,7 +478,17 @@ export function buildLaneSite({ id, sub, details = true, vehicle = null }) {
     const built = buildDevice(key);
     if (!built) continue;
     group.add(built.group);
-    devices.set(key, { group: built.group, body: built.body, pivot: built.pivot || null, baseColor: built.baseColor, pulse: 0 });
+    devices.set(key, {
+      group: built.group,
+      body: built.body,
+      pivot: built.pivot || null,
+      tip: built.tip || null,
+      lamp: built.lamp || null,
+      lampMaterial: built.lampMaterial || null,
+      setLamp: built.setLamp || null,
+      baseColor: built.baseColor,
+      pulse: 0,
+    });
   }
   // RSU 由交易龙门架承载，状态作用在天线上
   const rearAntenna = antBases.find((item) => item.role === "rear");
@@ -512,6 +547,8 @@ export function buildLaneSite({ id, sub, details = true, vehicle = null }) {
     headStrip,
     label,
     barrier: devices.get("barrier")?.pivot || null,
+    barrierTip: devices.get("barrier")?.tip || null,
+    barrierLamp: devices.get("barrier")?.setLamp || null,
   };
 }
 

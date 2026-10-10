@@ -36,6 +36,226 @@
       "createdAt": 1791528254804,
       "updatedAt": 1791528254804,
       "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv0vq3f7-6gptvy",
+      "text": "etclog 项目的 replay/ 页面观感改动，必须用 `python replay/check_render_effects.py [index|lanes|vehicles|all]`（可选 --keep 保留 _probe_*.html）做无头验证：它用 Edge --headless=new --enable-unsafe-swiftshader --virtual-time-budget 打开页面副本，页面内 gl.readPixels 回读帧缓冲判断（--screenshot 抓不到 WebGL 画布）。退出码 0 才算通过。运行时需要 python -m http.server 8765 在仓库根目录常驻。",
+      "tags": [
+        "etclog",
+        "replay",
+        "验证",
+        "无头渲染"
+      ],
+      "createdAt": 1791545148115,
+      "updatedAt": 1791545148115,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv0vq5f1-dbo32v",
+      "text": "etclog replay 页面的 three r165 后处理坑（已解决，勿踩回去）：(1) three 对 sRGB 的 scene.background 贴图不施加色调映射，而渲染进 render target 的 EffectComposer 里 OutputPass 会对整帧统一施加 ACES —— 两条路径天空不一样；所以 replay/scene-look.js 里天空改成挂在相机上的穹顶网格（skyDome + followSky(camera)，不要让 scene.background 用贴图）。(2) three 的 refreshFogUniforms 用 getUnlitUniformColorSpace：没有 render target 时按 outputColorSpace 处理雾色，渲到 RT 时按线性工作空间处理，所以裸 renderer.render() 与管线的雾/背景本来就不同；createBloomPipeline 因此让软件渲染也走 RT+OutputPass（只是不建泛光 pass、samples=0），实测两条路径逐像素一致。(3) UnrealBloomPass 的阈值比较的是线性 HDR 值，threshold 低于约 1.2 会把整片天空当高光刷白，当前用 0.18/0.45/1.4。",
+      "tags": [
+        "etclog",
+        "replay",
+        "three.js",
+        "渲染管线",
+        "坑"
+      ],
+      "createdAt": 1791545150701,
+      "updatedAt": 1791545150701,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv0wklso-2ajnu6",
+      "text": "etclog replay 的无头渲染自检里，`gl.readPixels(0,0,…)` 从**左下角**开始读：缓冲区第 0 行是画面**底部**。按\"第 0 行=顶部\"统计会把空间结论整个说反（把地面层说成\"落在上半部\"、远景层说成\"落在下半部\"）。check_render_effects.py 的 rowProfile 注释里写死了这件事。",
+      "tags": [
+        "etclog",
+        "无头渲染",
+        "compat",
+        "坑"
+      ],
+      "createdAt": 1791546571608,
+      "updatedAt": 1791546571608,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv0wknpk-usc091",
+      "text": "etclog replay 的地面风化层（replay/weathering.js）：(1) three 的 roughnessMap 是**乘法**贴图（roughness = 材质 roughness × 贴图 G 通道），底色必须留白=不改；第一版底色 0xe8 让整片广场变光滑反射天空，中位亮度 0.402→0.484、平均 0.591→0.613（像泼了水）。(2) 大尺度脏污用 MeshBasicMaterial + MultiplyBlending + depthWrite:false + renderOrder>0（transparent 必须为 false，否则会进透明队列；renderOrder 保证画在路面之后）。(3) 软件渲染下太阳阴影是关的，所以地面接地感全靠接触阴影贴片。(4) 自检断言：清掉 roughnessMap 后整帧平均亮度变化必须 <2%、画面变化 >0.2%、还原后逐像素回到基线。",
+      "tags": [
+        "etclog",
+        "replay",
+        "材质",
+        "坑"
+      ],
+      "createdAt": 1791546574088,
+      "updatedAt": 1791546574088,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv0xf96g-tbno0n",
+      "text": "etclog 的 check_render_effects.py 探针：比较方向会决定结论。要用 diffFrames(before, after) 表示\"从 before 变到 after\"：验证\"加了一层压暗的东西\"必须写 diffFrames(without, with)——写成 diffFrames(baseline, without) 会把\"变暗\"读成\"变亮\"（实测接地暗部：变暗 0 / 变亮 0.88%）。另外 gl.readPixels 第 0 行是画面底部（见另一条记忆）。",
+      "tags": [
+        "etclog",
+        "replay",
+        "自检",
+        "坑"
+      ],
+      "createdAt": 1791548001592,
+      "updatedAt": 1791548001592,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv0xfahs-vzui9f",
+      "text": "etclog 的 replay/lanes.js 里 THREE.Scene 是 buildScene() 的局部变量，模块作用域里没有它。页面有 `<canvas id=\"scene\">`，浏览器把 id 暴露成全局变量，所以在模块级写裸 `scene` 会拿到那个 canvas 元素（报 \"getObjectByName is not a function\" 这种看不出根因的错）。要用 STATE.scene。同理 app.js 里 `scene` 是模块级真 Scene，两页写法不同。",
+      "tags": [
+        "etclog",
+        "replay",
+        "坑",
+        "js"
+      ],
+      "createdAt": 1791548003296,
+      "updatedAt": 1791548003296,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv0yikw0-kklytk",
+      "text": "etclog 的 check_render_effects.py 里，多车道页（lanes）的时间轴单位是**毫秒**（STATE.span = minutes*60000，STATE.t 也是 ms），而 index 页按事件步进用秒；给 replay/barrier-arm.js 这类按秒写的公式传参时必须显式换算（lanes 传 timeScale: 0.001）。踩过的坑：直接传毫秒会把 0.9s 的行程压成 0.9ms（等效瞬变），但采样**比例**仍然成立、角度序列照样好看，只有端头高度（1.62m 而不是中间值）和时间读数（123736.15 这种量级）露马脚。",
+      "tags": [
+        "etclog",
+        "replay",
+        "自检",
+        "坑"
+      ],
+      "createdAt": 1791549836352,
+      "updatedAt": 1791549836352,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv0yimsy-bf4hji",
+      "text": "etclog 自检里验证\"外观/像素\"的通用手法：armPixelReport（check_render_effects.py）—— 把要量的对象 visible=false 渲一帧、再 true 渲一帧，两帧差异像素**只可能是那个对象**，于是可以量它的屏幕形状（bbox 长宽比、顶端高度）、颜色分类（红/白像素数）与沿主轴的换色次数（涂装相间的证据）。实测道闸：落杆 246×16px 横条/相间 12 次，抬杆 24×217px 竖条/相间 4 次。比\"统计画面变化占比\"更接近人眼。注意量完要把相机与时间游标还原，否则后续 draw call / 均值会变、无法与历史轮次比较。",
+      "tags": [
+        "etclog",
+        "replay",
+        "自检",
+        "方法"
+      ],
+      "createdAt": 1791549838834,
+      "updatedAt": 1791549838834,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv0zjs1x-cgp2d5",
+      "text": "etclog/replay：车辆接地阴影与接地暗部必须共用 scene-look.js 的 sunShadowFrame(direction)（唯一取法：地面影子方向 x/z + cot + 方位角），否则同一画面出现两个光源。车辆影子几何：sweep=cot×车高，along=proj+sweep，平面沿影子方向平移 sweep/2。三个已修的坑：(1) 影子挂在车体下会被转台带着转，必须用 onBeforeRender 按车体世界朝向反向补转角并顺手刷新 matrixWorld（否则慢一帧），局部角误差 ≤0.006°；(2) 平移量必须用局部影子方向，写世界方向会让车头一转影子滑到一边（重心方向实测差 107°）；(3) 基准必须取车体实际占地中心（Box3），半挂的车体组原点离占地中心实测 5.29m，不修正影子会整片铺到车厢外。贴图纵向不能\"只压车底、往外迅速淡掉\"（车底那片被车身挡住，肉眼看到的是露在车外的一圈，会读成影子落在向阳一侧）；要\"车底到背光边接近满强度、最后一段淡出\"。量\"影子在太阳哪一侧\"必须把小车的相机临时搬到正上方再藏影子做差（三四分之一机位下长车的车身会在影子里切掉一条斜带，重心被推到侧向，能差 100°+）。已知简化：片形是旋转矩形而非扫掠六边形，长车在近垂直日照下会多铺两个角。",
+      "tags": [
+        "replay",
+        "3d",
+        "阴影",
+        "太阳",
+        "自检"
+      ],
+      "createdAt": 1791551571908,
+      "updatedAt": 1791551571908,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv10al5l-s9rjec",
+      "text": "etclog replay 车辆接地阴影（round 9 定稿）：贴图不再是\"旋转矩形\"，而是真扫掠形状——占地矩形 4 个角点各加一份沿影子方向平移 sweep 的副本，8 点取凸包（convexHull 单调链），映射进 canvas 逐几何画一次并缓存（vehicle-models.js 的 sweptShadowTexture / orientShadow，texKey = swept:W:L:relDeg:cot）。两个易错点：①纵向亮度渐变的 yBack 必须按\"从画布底边量起\"的比例（渐变 createLinearGradient(0,H,0,0)，stop 0 在底边=向阳侧），直接用 toPx 的顶边行号会把平台段全压到车身底下，露在车外那截反而很淡；②半影 4 圈要按两轴各自\"绝对外推 grow 米\"（scale = 1+2grow/spanX），用统一比例会让 18m 长轴撑出两米多虚边。半影 0.22m，平面外框 crossPlane = cross+0.44、alongPlane = along+0.44。旧矩形多铺 1.24~1.51 倍（2.5×18.5m 车高 4.05m：真 93.49m² / 矩形 140.98m²）。核对：check_render_effects.py 的 shadowShapeReport 直接读贴图画布 alpha，在平面里铺 17×17 格与解析扫掠区域逐格比（离边界 0.37m 内不判），越界被压暗 0 格、该暗没暗 0 格；正上方机位轿车 43325px、沿影子方向 +3.42m、perp 1.24m、背光侧 100%。",
+      "tags": [
+        "etclog",
+        "replay",
+        "shadow",
+        "round9",
+        "vehicle-models"
+      ],
+      "createdAt": 1791552822681,
+      "updatedAt": 1791552822681,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv11uqz9-62xte1",
+      "text": "etclog/replay 第10轮（车辆接地阴影物理化）最终读数：影色由场景灯光算出 影色=天光/(天光+直射)=[0.168,0.254,0.382]（B/R=2.27），与探针独立复算最大差 0.0；天空平均亮度 [0.261,0.402,0.613]（含扣除日面/日晕 30° 锥，占天光 17.6%）；正上方同批像素 影子里 [0.171,0.228,0.307] vs 太阳下 [0.341,0.39,0.451]，亮度比 0.577、蓝红比 1.791 vs 1.325；扫掠形状核对 230 格 越界 0 / 该暗没暗 0 / 影核最弱覆盖度 0.999；轿车影子 35078px、沿影子方向 +3.62m、背光侧占 1；三页 draw call 228/229/242、1063/1064/1077、629/630/643 与三角形数全部未变；接地暗部 82/263 未变。自检全部通过。",
+      "tags": [
+        "etclog",
+        "replay",
+        "影子",
+        "round10",
+        "读数"
+      ],
+      "createdAt": 1791555442965,
+      "updatedAt": 1791555442965,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv11usu7-s4nanz",
+      "text": "etclog/replay 天空画布两个必须同时成立的约定（第10轮踩坑）：(1) 云必须用 source-over 而不是 lighter——加法叠约100个软团会把整片天推到纯白（实测 768 宽的画布上半球全是 255,255,255），天空成白幕、环境漫反射变白、影子算出来发灰；云团半径还必须按画布宽度等比缩放（原来半径是 2048 下的绝对像素，低配 768 天空下云糊满全幅）。(2) 天空穹顶的 UV 必须与 PMREM 的 equirect 采样一致（SphereGeometry 自带 UV 的 u 与 equirect 差一次 z 镜像），日面位置必须按 atan2(cos方位角,sin方位角)/2π+0.5 画（原来用 方位角/360，与本工程 0°→+Z 的约定差一次镜面，天上太阳离灯 90°）。验证方式：把天空画布降采样成 128×64 找最亮格，与 DirectionalLight 方向夹角应 <12°（修完是 3.3°）。",
+      "tags": [
+        "etclog",
+        "replay",
+        "天空",
+        "equirect",
+        "round10"
+      ],
+      "createdAt": 1791555445375,
+      "updatedAt": 1791555445375,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv11uuf6-fjscum",
+      "text": "etclog/replay 自检脚本自身的两条经验（第10轮）：(1) 每次改 check_render_effects.py 里的 HELPERS/TEMPLATES 之后，先用 Python 从模块里取出 HELPERS+TEMPLATES 拼成 .mjs 跑 node --check——注入的探针一旦有语法错，页面不会挂句柄，报错只表现为\"没有收到探针数据\"，很费时间；但 node --check 抓不到作用域错（例如把 const 声明在 if 块里、却在函数尾部 return 引用它），那种错要靠真跑一遍，症状是后半段报告全部缺失。改完一定要跑一整页。(2) 像素分类阈值不能写绝对亮度：天空换成真实蓝天后环境光低了一档，\"白 > 185\"就把栏杆臂的白涂装判成\"其他\"，红白相间只剩 1 次换色（实测红=442/白=429 却数不出相间）。改成相对判据（红=与蓝通道比；白=非红像素里亮度高于中位数）后读数 12 次/4 次。",
+      "tags": [
+        "etclog",
+        "自检",
+        "check_render_effects",
+        "经验",
+        "round10"
+      ],
+      "createdAt": 1791555447426,
+      "updatedAt": 1791555447426,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv12hsyj-o1cpg6",
+      "text": "etclog 第 11 轮（静态构件硬影层）已完成并全绿：新增 replay/prop-shadows.js，addPropShadows(scene,{direction,tint,ground,y,minTop,minPlanArea,minShadowArea,cell,maxInstances}) 按平行光投影解析烤影子——方盒=占地矩形∪平移 cot×自身高度的凸包、圆柱=圆盘扫掠跑道形、球=椭圆（沿影子方向 r/sin高度角、垂直 r）。离地高度只贡献整体偏移 cot×base（吊在 6.4m 的横梁影长 0.25m 但整体偏 4.0m）；必须用 ground 矩形按铺装裁剪（index 广场只 64×96 而路灯/树在 x≈±40，不裁影子悬空），lanes 用 x∈[-74.6,74.6] z∈[-85,85]；栏杆臂（barrierArm/barrierPivot）每帧在转必须按名字排除；merged 成单个 Mesh（顶点色从线性乘数渐变到白 + MultiplyBlending + toneMapped:false + fog:false + depthWrite:false + DoubleSide，v0.008），+2 draw call。实测 index 52 片/271 候选/1089 顶点/85.86m²（藏起来变暗 0.0006，蓝红 1.447 vs 1.252），lanes 244/722/4710/855.74m²（变暗 0.0016，蓝红 1.483 vs 1.305），vehicles 页空层；AO 实例 82/263 未变，check_render_effects.py all 全绿。抓到的两个真 bug：树冠投影多算一次 lift（重心核对顶出）、contact-ao.js 重构删了 addContactAO 的 matrix 声明而 310 行仍用（node --check 查不出）。因此建立了 Node 端几何冒烟台：把 replay 模块按仓库结构复制成 .mjs（相对 import 改写、three→vendor、含 addons）+ document.createElement canvas 替身，这样 addContactAO 与 addPropShadows 都能在浏览器外跑，命令是 python _mksmoke.py _smoke/run.mjs && node _smoke/run.mjs（用完即删，本次已清理）。",
+      "tags": [
+        "etclog",
+        "replay",
+        "three.js",
+        "阴影",
+        "硬影",
+        "prop-shadows",
+        "自检"
+      ],
+      "createdAt": 1791556518619,
+      "updatedAt": 1791556518619,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv13x79b-bdkjs2",
+      "text": "etclog/replay 树冠斑驳硬影（round 12/13）完成的真实结论与踩坑，供后续轮次直接复用：prop-shadows.js 现在把球类构件（树冠）按六角格切成一簇簇小椭圆影子（乘法混合下两簇一叠就成 tint²≈0.03 死黑，所以格距必须≥2×簇半径）。三条硬结论：(1) 覆盖率 ≈ π/格距系数²，与簇半径无关 —— 格距 2.5→0.50（树影偏淡，lanes 行分布核对从 0.389 掉到 0.312 报错），2.12→0.72（叶缝 6~13cm ≈ 半影，正确）；(2) 簇心必须铺到冠幅边界（CANOPY_CLUMP_INSET=0），要求\"整簇装在冠内\"会让树冠边缘一圈没簇，lanes 上 297 个树冠里 289 个被整片刷掉；(3) \"影子够不够大\"用整块投影（斑驳前、未裁剪）、\"有多少落在铺装上\"另用 minDrawnArea，两门分开，否则大树被当小灌木丢。最终 lanes：237 片 / 756.36m² / 树冠 19 片 272 簇 覆盖率 0.718 / 变暗 0.0013 / 蓝红比 1.458 vs 1.297；index：48 片 / 44.12m² / 树冠 11 片 167 簇 覆盖率 0.742 / 变暗 0.0005；接地暗部 82/263 不变；check_render_effects.py all 全绿。诊断方法：把 CANOPY_DAPPLE_MIN 临时调到 1e9 关掉斑驳、同页再跑一次做对照（实心 0.389 过 vs 斑驳 0.312 不过，当场定性）；prop-shadows.js 新增 dropped 分门记账（blocked/plan/tiny/clip/dedupe + byKind），报告里一行指出在哪一门掉的。踩坑：绝不用 pwsh 的 Get-Content/Set-Content 改这些 UTF-8 源文件（会整片乱码），要用 edit 工具或 [System.IO.File]::WriteAllText(..., UTF8Encoding($false))。",
+      "tags": [
+        "etclog",
+        "replay",
+        "影子",
+        "three.js",
+        "调试方法"
+      ],
+      "createdAt": 1791558916607,
+      "updatedAt": 1791558916607,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
+    },
+    {
+      "id": "m-mv1o7424-bdbirs",
+      "text": "etclog 可视化项目（replay/，分支 eslineN）：天空的云在 replay/scene-look.js 里改为「天球布点 + 等距柱状投影」——纯函数 skyCloudLayout() 负责几何（sin高度角在[0,1]均匀撒点、视角半径∝sin高度角、亮度按 cos(与太阳夹角)）、paintSkyClouds() 只负责画（椭圆足印：竖直半轴 ρ、水平半轴 ρ/sin高度角），先画太阳再画云（云能遮日面），画云前 clip 到地平线以上。Node 冒烟台 replay/_smoke/sky-check.mjs（用 python _smoketool.py 复制模块图后 node 跑）把「投回天球是圆的」用恒等式钉死，16 项全通过。自检 replay/check_render_effects.py 里 report_sky 的两条关键经验：默认机位看不到天（lanes 58m 俯视、展台近景转台天空像素 0，index 仅 0.4%），所以要在抬高 55° 的探针机位量，并且必须把天空穹顶 position.copy(camera.position)（天穹 followSky(camera) 挂在相机上）；云的净贡献用 skyCanvasTexture({clouds:false}) 换贴图前后差一帧直接量，别用「又亮又不偏色」这类代理指标（那主要在地量地平线的灰白雾）。",
+      "tags": [
+        "etclog",
+        "replay",
+        "three-js",
+        "sky",
+        "clouds",
+        "verification"
+      ],
+      "createdAt": 1791592971340,
+      "updatedAt": 1791592971340,
+      "sessionId": "session-ad6a2c51-b03b-4059-8f71-25fd9124a8d8"
     }
   ]
 }

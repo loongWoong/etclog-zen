@@ -1,7 +1,13 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { createRenderer, createRenderLoop, detectGpu, frameInterval, mountGpuBadge } from "./render-runtime.js";
-import { BODY_COLOR_OPTIONS, buildVehicleModel } from "./vehicle-models.js";
+import { BODY_COLOR_OPTIONS, buildVehicleModel, createBrakeController, setShadowTint, setSunDirection } from "./vehicle-models.js";
+import { addGroundHaze, applyRenderLook, applyShadowFlags, asphaltMaterial, createBloomPipeline, setupSky } from "./scene-look.js";
+import { buildDistantHorizon, buildLaneMarkings, buildScenery, hazardMaterial } from "./scenery.js";
+import { buildWeathering, groundRoughness } from "./weathering.js";
+import { addContactAO } from "./contact-ao.js";
+import { addPropShadows } from "./prop-shadows.js";
+import { BARRIER, createBarrierArm, easeInOut } from "./barrier-arm.js";
 
 // ---------------------------------------------------------------------------
 // 设备布局
@@ -25,9 +31,8 @@ const deviceInfo = { ...LANE_DEVICES };
 const LANE_DEVICE_KEYS = Object.keys(LANE_DEVICES);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x151a20);
 
-const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 400);
+const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 600);
 const PANORAMA = { position: [-36, 34, 54], target: [0, 1.5, 0] };
 camera.position.set(...PANORAMA.position);
 camera.lookAt(...PANORAMA.target);
@@ -37,6 +42,9 @@ const GPU = detectGpu();
 // 渲染循环在文件末尾创建；这里先声明，避免 controls 的监听器在求值期触发时踩到暂时性死区
 let LOOP = null;
 const renderer = createRenderer(document.querySelector("#scene"), GPU);
+
+// 渲染器的影调/色彩空间（ACES + sRGB），阴影在场景建好后再统一分配角色
+applyRenderLook(renderer, GPU);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(...PANORAMA.target);
@@ -55,18 +63,25 @@ const VIEW_PRESETS = {
 let cameraTween = null;
 
 
-const ambient = new THREE.AmbientLight(0xffffff, 0.62);
-scene.add(ambient);
-const sun = new THREE.DirectionalLight(0xffffff, 1.1);
-sun.position.set(8, 18, 8);
-scene.add(sun);
+// 天空 + 环境反射 + 太阳与阴影：正午太阳偏高，阴影短而清晰（详见 scene-look.js）
+const LOOK = setupSky(scene, renderer, { software: GPU.software });
+setSunDirection(LOOK.direction);            // 车辆接地阴影也按这颗太阳铺（与接地暗部同一套取法）
+setShadowTint(LOOK.shadowTint);             // 影子的颜色/深浅按场景自己的灯算：影子里只剩天光
+
+// 泛光 + 统一色调映射管线：太阳、警示灯、刹车灯、设备状态灯的光晕。
+// 软件渲染下不建泛光 pass（省一遍全屏模糊），但同样走 RT+OutputPass，画面与 GPU 一致。
+const BLOOM = createBloomPipeline(renderer, scene, camera, { enabled: !GPU.software });
+LOOK.followSky(camera);   // 天空穹顶挂在相机上，先摆好再画第一帧
 
 const deviceMeshes = new Map();
 const coilMeshes = new Map();
 const profileObjects = [];
+let AO_INFO = { count: 0, candidates: 0 };    // 接地暗部统计（供 __REPLAY__ 自检读取）
+let PROP_SHADOW_INFO = { count: 0, candidates: 0 };   // 静态构件硬影层统计
 const antennaEndpoints = [];
 const labels = [];
 let replay = null;
+let barrierTimeline = null;
 let currentIndex = 0;
 let playing = false;
 let lastTick = performance.now();
@@ -165,8 +180,13 @@ function roundRect(ctx, x, y, w, h, r) {
 function buildScene() {
   buildGround();
 
-  const road = box(5.2, 0.08, 70, 0x2a3038);
+  const road = new THREE.Mesh(
+    new THREE.BoxGeometry(5.2, 0.08, 70),
+    asphaltMaterial({ color: "#5b626b", repeat: [3, 34], roughness: 0.9, roughnessMap: groundRoughness([1, 12]) }),
+  );
   road.position.set(0, -0.04, 0);
+  road.receiveShadow = true;
+  road.name = "roadSurface";
   scene.add(road);
 
   for (let z = -31; z <= 31; z += 6) {
@@ -175,6 +195,9 @@ function buildScene() {
     scene.add(mark);
   }
   buildDirectionArrows();
+
+  // 两侧边线 + 停止线 + 轮胎磨损痕（与 lane-kit.js 的多车道现场同一套）
+  scene.add(buildLaneMarkings({ roadWidth: 5.2, roadLength: 70 }));
 
   const shoulderL = box(0.08, 0.04, 70, 0xcfd8e3);
   shoulderL.position.set(-2.65, 0.04, 0);
@@ -193,6 +216,16 @@ function buildScene() {
   const islandTail = islandNose.clone();
   islandTail.position.z = 28.5;
   scene.add(islandTail);
+
+  // 岛头黄黑警示条纹（与 lane-kit.js 一致）
+  const hazard = hazardMaterial({ repeat: [2, 1] });
+  for (const z of [-25.5, 28.5]) {
+    const stripe = box(0.97, 0.24, 0.55, 0xffffff);
+    stripe.name = "islandHazard";
+    stripe.material = hazard;
+    stripe.position.set(3.25, 0.13, z + (z < 1.5 ? 0.34 : -0.34));
+    scene.add(stripe);
+  }
 
   const tollBooth = new THREE.Group();
   const boothBody = box(1.35, 1.7, 2.2, 0xd7dee8);
@@ -291,11 +324,41 @@ function buildScene() {
 
   scene.add(makeVehicle());
   renderLegend();
+
+  // 场地外围道具：护栏、路灯、行道树（广场 64×96，护栏摆在边缘外）
+  scene.add(buildScenery({ halfWidth: 32, zMin: -48, zMax: 48 }));
+
+  // 所有几何建完后再统一分配阴影角色：大块地面只接收、设备与车辆投射+接收
+  applyShadowFlags(scene);
+  addGroundHaze(scene);
+
+  // 地面风化（脏污/补丁/裂缝/排水沟/井盖）与远景层次（远山/厂房/远处树墙）：
+  // 都放在 applyShadowFlags 之后，免得被当成场内物体乱给阴影角色
+  scene.add(buildWeathering({ halfWidth: 32, zMin: -48, zMax: 48, islandXs: [3.25], y: 0.006 }));
+  scene.add(buildDistantHorizon({ z: -205, spread: 280 }));
+
+  // 最后一步：给所有立在地上的构件补接地暗部与正午软影（软件渲染关阴影时全靠它"落地"）
+  const ao = addContactAO(scene, { direction: LOOK.direction });
+  AO_INFO = { count: ao.count, candidates: ao.candidates };
+  // 硬影层：同样是"按太阳投出来的影子"，但这是**硬影**（解析投影、可以拖很长）。
+  // ground 必须给：广场只有 64×96，路灯/行道树站在广场之外（x≈±40），不裁的影子会悬在雾里。
+  const propShadows = addPropShadows(scene, {
+    direction: LOOK.direction,
+    tint: LOOK.shadowTint,
+    ground: { minX: -32, maxX: 32, minZ: -48, maxZ: 48 },
+  });
+  PROP_SHADOW_INFO = { count: propShadows.count, candidates: propShadows.candidates };
 }
 
 function buildGround() {
-  const ground = box(64, 0.08, 96, 0x191d23);
+  // 广场：沥青颗粒贴图（纹理重复密度按米算，颗粒才不会拉成条）
+  const ground = new THREE.Mesh(
+    new THREE.BoxGeometry(64, 0.08, 96),
+    asphaltMaterial({ color: "#666d76", repeat: [32, 48], roughness: 0.95, roughnessMap: groundRoughness([3, 4]) }),
+  );
   ground.position.set(0, -0.1, 0);
+  ground.receiveShadow = true;
+  ground.name = "plazaGround";
   scene.add(ground);
 }
 
@@ -398,23 +461,16 @@ function buildLaneDevice(key) {
   }
 
   if (key === "barrier") {
-    const group = new THREE.Group();
-    const base = box(0.55, 0.9, 0.55, 0x313946);
-    base.position.set(0, 0.67, 0);
-    const pivot = new THREE.Group();
-    pivot.position.set(0, 1.12, 0);
-    pivot.name = "barrierArm";
-    const arm = box(6.2, 0.12, 0.12, 0xeb5757);
-    arm.position.set(-3.1, 0, 0);
-    const tip = box(0.12, 0.36, 0.36, 0xf4f6f8);
-    tip.position.set(-6.05, 0, 0);
-    pivot.add(arm, tip);
-    group.add(base, pivot);
+    // 道闸外观与动作统一在 barrier-arm.js：红白相间直臂 + 配重 + 黄闪灯 + 真实行程
+    const rig = createBarrierArm({ pivotName: "barrierArm" });
+    barrierRig = rig;
+    barrier.arm = rig.pivot;
+    const group = rig.group;
     const label = makeLabel(info.label);
     label.position.set(0.2, 1.95, 0);
     group.add(label);
     group.position.set(info.x, 0, info.z);
-    return { group: registerDevice(key, group, arm), body: arm };
+    return { group: registerDevice(key, group, rig.arm), body: rig.arm };
   }
 
   return null;
@@ -527,6 +583,8 @@ function updateProfileVisibility(profile) {
 }
 
 function makeVehicle(spec = null, options = {}) {
+  // 换车时释放上一辆车自己的材质（尾灯/刹车灯光晕/结果标记）
+  vehicle()?.userData.model?.dispose?.();
   const holder = new THREE.Group();
   holder.name = "vehicle";
   holder.position.set(0, 0, -28);
@@ -545,6 +603,11 @@ function makeVehicle(spec = null, options = {}) {
     holder.add(label);
   }
   holder.userData.model = built;
+  lastVehicleZ = null;
+  brakeController = createBrakeController();
+  built.setBrake(0);
+  // 车辆自己也要有阴影角色（重建的模型不会走 buildScene 那次统一分配）
+  applyShadowFlags(built.group);
   return holder;
 }
 
@@ -631,6 +694,76 @@ function initBodyColorSelect() {
 
 function barrierArm() {
   return scene.getObjectByName("barrierArm");
+}
+
+// ---------------------------------------------------------------------------
+// 道闸动作：状态来自日志的「抬杆到位 / 落杆到位」，行程时长是个视觉约定
+// （日志里控制指令到到位上报只有几十毫秒，是握手时间，量不出机械行程）。
+// 角度 = 起点 + (目标 - 起点) × 缓入缓出(已走时间 / 行程)，只在目标变化时重开一段，
+// 所以来回拖时间轴，每一段的起点都接得上，不会"跳"。
+// ---------------------------------------------------------------------------
+const barrier = {
+  arm: null,
+  current: 0,        // 当前角度（rad）
+  from: 0,
+  to: 0,
+  seconds: 1,
+  elapsed: 1,
+  open: false,
+  traveling: false,
+  clock: 0,
+};
+let barrierRig = null;
+
+/** 从日志文本判定栏杆状态：抬杆到位 / 落杆到位（含控制指令里的 00-落杆 / 01-抬杆） */
+function barrierStateFromText(text) {
+  if (/抬杆到位|抬落杆到位信号上报-\[抬杆到位\]|控制类型\(01/.test(text)) return true;
+  if (/落杆到位|抬落杆到位信号上报-\[落杆到位\]|控制类型\(00/.test(text)) return false;
+  return null;
+}
+
+/** 每个事件下标上的栏杆状态（该事件之前最近一条栏杆日志），O(n) 预先算好 */
+function buildBarrierTimeline(events) {
+  let open = false;
+  return events.map((event) => {
+    if (event.device === "barrier") {
+      const state = barrierStateFromText(`${event.raw || ""} ${event.summary || ""}`);
+      if (state !== null) open = state;
+    }
+    return open;
+  });
+}
+
+function applyBarrierTarget(open) {
+  if (!barrierRig || open === null) return;
+  if (open === barrier.open && barrier.elapsed >= barrier.seconds) return;
+  if (open === barrier.open) return;
+  barrier.from = barrier.current;
+  barrier.to = THREE.MathUtils.degToRad(open ? BARRIER.openDeg : 0);
+  barrier.seconds = open ? BARRIER.upSeconds : BARRIER.downSeconds;
+  barrier.elapsed = 0;
+  barrier.open = open;
+  barrier.traveling = true;
+  LOOP?.hold(1400);
+}
+
+function updateBarrier(dt) {
+  if (!barrierRig) return;
+  if (barrier.traveling) {
+    barrier.elapsed += dt;
+    const progress = Math.min(1, barrier.elapsed / barrier.seconds);
+    barrier.current = barrier.from + (barrier.to - barrier.from) * easeInOut(progress);
+    barrier.arm.rotation.z = barrier.current;
+    barrierRig.setAngle(barrier.current);
+    if (progress >= 1) {
+      barrier.traveling = false;
+      barrierRig.setLamp(0);
+    } else {
+      // 运行中黄闪（真实道闸杆座上的警示灯就是这么闪的）
+      barrier.clock += dt;
+      barrierRig.setLamp(Math.floor(barrier.clock * BARRIER.lampHz * 2) % 2 === 0 ? 1 : 0);
+    }
+  }
 }
 
 function obuUnit() {
@@ -726,10 +859,11 @@ function setEvent(index) {
   activeLegend(event.device);
 
   const arm = barrierArm();
-  if (event.kind === "success") {
-    arm.rotation.z = THREE.MathUtils.degToRad(-26); // 抬杆放行
-  } else if (event.kind === "reject") {
-    arm.rotation.z = 0; // 落杆
+  if (arm) {
+    // 状态优先取日志里的栏杆事件；日志没提到栏杆时退回按这次事件的结果推断（旧的观感行为）
+    const logged = barrierTimeline ? barrierTimeline[Math.max(0, Math.min(currentIndex, barrierTimeline.length - 1))] : null;
+    const fallback = event.kind === "success" ? true : event.kind === "reject" ? false : null;
+    applyBarrierTarget(logged === null ? fallback : logged);
   }
 
   els.scrubber.value = currentIndex;
@@ -817,6 +951,17 @@ async function loadReplay(file) {
   replay = await response.json();
   currentIndex = 0;
   coilStates = new Map();
+  barrierTimeline = buildBarrierTimeline(replay.events || []);
+  // 换了文件就从落杆状态重新起步（新文件的窗口起点在第一条栏杆日志之前）
+  barrier.current = 0;
+  barrier.from = 0;
+  barrier.to = 0;
+  barrier.open = false;
+  barrier.elapsed = 1;
+  barrier.seconds = 1;
+  barrier.traveling = false;
+  barrierRig?.setAngle(0);
+  barrierRig?.setLamp(0);
   els.vehicle.textContent = replay.vehicle;
   els.title.textContent = replay.passageTitle || `${replay.vehicle} ${replay.events[0]?.time?.slice(0, 19) || ""}`;
   els.scrubber.max = String(Math.max(replay.events.length - 1, 0));
@@ -833,6 +978,7 @@ function resize() {
   renderer.setSize(rect.width, rect.height, false);
   camera.aspect = rect.width / Math.max(rect.height, 1);
   camera.updateProjectionMatrix();
+  BLOOM.setSize(rect.width, rect.height);
   LOOP?.hold(300);
 }
 
@@ -841,9 +987,28 @@ function resize() {
 // ---------------------------------------------------------------------------
 const ANIM_SCRATCH_VECTOR = new THREE.Vector3();
 const ANIM_SCRATCH_VECTOR_B = new THREE.Vector3();
+let lastVehicleZ = null;
+let brakeController = createBrakeController();
+
+// 车轮滚动 + 刹车灯：用本帧实际发生的 z 位移换算转角/速度（缓动、拖拽、播放都自然成立）
+function spinVehicleWheels(dt) {
+  const object = vehicle();
+  if (!object) return;
+  const model = object.userData.model;
+  const previous = lastVehicleZ === null ? object.position.z : lastVehicleZ;
+  const delta = object.position.z - previous;
+  lastVehicleZ = object.position.z;
+  if (Math.abs(delta) > 1e-4) model?.spin?.(delta);
+  if (!model || !brakeController) return;
+  // 拖拽时间轴/跳事件会造成几米级的突跳：重置而不是当作急刹
+  if (Math.abs(delta) > 2.5) brakeController.reset();
+  else brakeController.update(Math.max(dt, 1e-3), delta);
+  model.setBrake?.(brakeController.level);
+}
 
 function stillAnimating() {
   if (playing || cameraTween) return true;
+  if (barrier.traveling) return true;   // 抬落杆还没走完时别停帧，不然会卡在半程
   for (const item of deviceMeshes) if (item.pulse > 0) return true;
   for (const item of coilMeshes) if (item.pulse > 0) return true;
   // 脉冲衰减完、相机缓动结束后就是静态画面，不需要继续出帧
@@ -868,6 +1033,8 @@ function onFrame(dt) {
     item.body.material.emissive.setHex(item.baseColor).multiplyScalar(item.pulse * 0.95);
     item.body.scale.setScalar(1 + item.pulse * 0.1);
   });
+
+  updateBarrier(dt);
 
   coilMeshes.forEach((item) => {
     item.pulse = Math.max(0, item.pulse - dt * 1.8);
@@ -917,8 +1084,10 @@ function onFrame(dt) {
   }
 
   labels.forEach((label) => label.lookAt(camera.position));
+  LOOK.followSky(camera);
+  spinVehicleWheels(dt);
   controls.update();
-  renderer.render(scene, camera);
+  BLOOM.render();
   if (badge) badge.update(LOOP ? LOOP.fps : 0);
 }
 
@@ -955,6 +1124,27 @@ resize();
 // 无头验证 / 控制台调试接口（与 lanes.js 的 window.__LANES__ 对应）
 window.__REPLAY__ = {
   get scene() { return scene; },
+  get camera() { return camera; },
+  get renderer() { return renderer; },
+  get gpu() { return GPU; },
+  get look() { return LOOK; },
+  get bloom() { return BLOOM; },
+  get contactAO() { return AO_INFO; },
+  get propShadows() { return PROP_SHADOW_INFO; },
+  get barrier() {
+    if (!barrierRig) return null;
+    const world = new THREE.Vector3();
+    barrierRig.tip.getWorldPosition(world);
+    return {
+      angleDeg: THREE.MathUtils.radToDeg(barrier.current),
+      open: barrier.open,
+      traveling: barrier.traveling,
+      tipY: world.y,
+      lamp: barrierRig.lampMaterial.emissiveIntensity,
+    };
+  },
+  /** 自检用：日志里每个事件下标的栏杆状态（true=抬杆） */
+  get barrierTimeline() { return barrierTimeline; },
   get replay() { return replay; },
   get index() { return currentIndex; },
   setEvent,
